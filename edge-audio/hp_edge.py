@@ -72,12 +72,13 @@ def record_audio_window():
             os.remove(p)  # hapus sisa rekaman sebelumnya, supaya tidak salah baca file lama
 
     # Stop paksa kalau ada rekaman lama yang masih nyangkut (misal dari error
-    # sebelumnya yang bikin durasi jadi unlimited). Diabaikan kalau memang
-    # tidak ada rekaman yang jalan (exit code non-zero itu wajar di kasus ini).
+    # sebelumnya yang bikin durasi jadi unlimited). PENTING: stop/quit yang
+    # benar itu "-q", BUKAN "-d" -- "-d" artinya "mulai rekaman pakai setting
+    # default", bukan stop (ini bug yang sempat ada di versi sebelumnya).
     # Retry beberapa kali karena stop-nya butuh waktu buat benar-benar
     # dieksekusi oleh background service (0.3s saja kadang belum cukup).
     for attempt in range(5):
-        subprocess.run(["termux-microphone-record", "-d"], capture_output=True)
+        subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
         time.sleep(0.5)
         start = subprocess.run(
             ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac"],
@@ -89,12 +90,18 @@ def record_audio_window():
     else:
         raise RuntimeError(
             "Gagal mulai rekaman baru setelah beberapa percobaan -- ada rekaman lama "
-            "yang tidak mau berhenti. Coba jalankan manual: termux-microphone-record -d"
+            "yang tidak mau berhenti. Coba jalankan manual: termux-microphone-record -q"
         )
     # termux-microphone-record cuma mengirim perintah ke background service lalu
-    # langsung return -- rekaman baru benar-benar selesai setelah WINDOW_SECONDS,
-    # jadi harus nunggu dulu sebelum baca filenya (+0.5s buffer).
-    time.sleep(WINDOW_SECONDS + 0.5)
+    # langsung return -- rekaman baru benar-benar selesai setelah WINDOW_SECONDS.
+    time.sleep(WINDOW_SECONDS)
+
+    # Stop EKSPLISIT di sini pakai "-q" (bukan "-d"!) -- time-limit (-l) saja
+    # ternyata tidak selalu bikin file .m4a di-finalize dengan benar (moov
+    # atom/metadata akhir file kadang belum sempat ditulis), jadi dipaksa
+    # quit/stop manual dulu supaya filenya valid.
+    subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
+    time.sleep(0.5)  # beri waktu file selesai ditulis ke disk
 
     if not os.path.exists(_RECORD_PATH):
         raise RuntimeError(
