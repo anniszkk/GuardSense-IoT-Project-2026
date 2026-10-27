@@ -29,7 +29,10 @@ from prefilter import compute_rms, compute_dominant_frequency, should_send
 # TODO: ganti sesuai HP ("hpA" di satu HP, "hpB" di HP satunya)
 DEVICE_ID = "hpA"
 
-WINDOW_SECONDS = 1.5
+# HARUS integer -- termux-microphone-record -l dipakai sebagai angka bulat
+# di shell script-nya, kalau kasih desimal (misal 1.5) bakal error "arithmetic
+# syntax error" dan rekaman malah jadi unlimited (bukan berhenti sesuai durasi).
+WINDOW_SECONDS = 2
 
 _RECORD_PATH = "_rec_tmp.m4a"  # file rekaman mentah (AAC) dari termux-microphone-record
 _WAV_PATH = "_rec_tmp.wav"     # hasil convert ke 16-bit PCM WAV, siap dipakai prefilter
@@ -68,8 +71,14 @@ def record_audio_window():
         if os.path.exists(p):
             os.remove(p)  # hapus sisa rekaman sebelumnya, supaya tidak salah baca file lama
 
+    # Stop paksa kalau ada rekaman lama yang masih nyangkut (misal dari error
+    # sebelumnya yang bikin durasi jadi unlimited). Diabaikan kalau memang
+    # tidak ada rekaman yang jalan (exit code non-zero itu wajar di kasus ini).
+    subprocess.run(["termux-microphone-record", "-d"], capture_output=True)
+    time.sleep(0.3)
+
     subprocess.run(
-        ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(WINDOW_SECONDS), "-e", "aac"],
+        ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac"],
         check=True,
     )
     # termux-microphone-record cuma mengirim perintah ke background service lalu
