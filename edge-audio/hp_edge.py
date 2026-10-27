@@ -74,13 +74,23 @@ def record_audio_window():
     # Stop paksa kalau ada rekaman lama yang masih nyangkut (misal dari error
     # sebelumnya yang bikin durasi jadi unlimited). Diabaikan kalau memang
     # tidak ada rekaman yang jalan (exit code non-zero itu wajar di kasus ini).
-    subprocess.run(["termux-microphone-record", "-d"], capture_output=True)
-    time.sleep(0.3)
-
-    subprocess.run(
-        ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac"],
-        check=True,
-    )
+    # Retry beberapa kali karena stop-nya butuh waktu buat benar-benar
+    # dieksekusi oleh background service (0.3s saja kadang belum cukup).
+    for attempt in range(5):
+        subprocess.run(["termux-microphone-record", "-d"], capture_output=True)
+        time.sleep(0.5)
+        start = subprocess.run(
+            ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac"],
+            capture_output=True, text=True,
+        )
+        if "already in progress" not in start.stdout.lower() and "already in progress" not in start.stderr.lower():
+            break
+        print(f"[{DEVICE_ID}] Masih ada rekaman lama nyangkut, coba stop lagi... ({attempt + 1}/5)")
+    else:
+        raise RuntimeError(
+            "Gagal mulai rekaman baru setelah beberapa percobaan -- ada rekaman lama "
+            "yang tidak mau berhenti. Coba jalankan manual: termux-microphone-record -d"
+        )
     # termux-microphone-record cuma mengirim perintah ke background service lalu
     # langsung return -- rekaman baru benar-benar selesai setelah WINDOW_SECONDS,
     # jadi harus nunggu dulu sebelum baca filenya (+0.5s buffer).
