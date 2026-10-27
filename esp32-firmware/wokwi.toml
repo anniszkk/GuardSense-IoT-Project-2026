@@ -1,0 +1,9 @@
+# Config simulasi Wokwi untuk project PlatformIO ini.
+# Setelah dibuka di VS Code (dengan ekstensi "Wokwi for VS Code" + PlatformIO),
+# tekan F1 -> "Wokwi: Start Simulator" untuk jalankan diagram.json memakai
+# firmware hasil build PlatformIO (.pio/build/esp32dev/firmware.bin).
+
+[wokwi]
+version = 1
+firmware = ".pio/build/esp32dev/firmware.bin"
+elf = ".pio/build/esp32dev/firmware.elf"

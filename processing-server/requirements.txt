@@ -1,0 +1,5 @@
+paho-mqtt>=2.0
+python-dotenv
+flask
+numpy
+# tensorflow / tensorflow-hub -- aktifkan kalau sudah mulai pakai YAMNet (opsional, Bab 5.2.1)
