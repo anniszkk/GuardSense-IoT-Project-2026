@@ -300,4 +300,6 @@ Rujukan yang mendasari pemilihan sensor dan pendekatan algoritma di dokumen ini:
 
 - Google AudioSet Ontology & YAMNet model (TensorFlow Hub) — kelas suara Glass, Glass shatter, Breaking, Fire alarm, Smoke detector smoke alarm.
 
+- Harris, F.J. (1978). On the Use of Windows for Harmonic Analysis with the Discrete Fourier Transform. Proceedings of the IEEE, 66(1), 51–83. — dasar penggunaan window Hanning sebelum FFT pada `compute_dominant_frequency` (Bab 5.1/5.2.1) untuk mengurangi spectral leakage.
+
 *Dokumen ini dibuat sebagai bahan diskusi internal kelompok sebelum penyusunan laporan dan implementasi. Angka ambang batas (threshold) di seluruh dokumen bersifat indikatif dan perlu dikalibrasi dengan pengujian langsung menggunakan perangkat yang dipakai.*

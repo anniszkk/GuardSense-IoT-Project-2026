@@ -2,10 +2,18 @@
 (classify_audio.py punya Annis, classify_fire.py punya Binar), publish alert,
 dan serve dashboard di localhost:8000.
 Lihat docx Bab 3 (arsitektur), Bab 6 (MQTT), Bab 7 (dashboard).
+
+on_audio_message sudah manggil classify_audio.classify_glass_break (Annis,
+rule-based, sudah tervalidasi pakai sampel nyata -- lihat edge-audio/samples).
+Liveness check (Bab 5.2.1.1) BELUM disambung di sini -- masih TODO, butuh
+2 HP jalan bareng untuk classify_audio.liveness_check_amplitude_ratio.
+classify_glass_break_yamnet (opsional/AI) juga belum dipanggil di sini
+by default karena berat (butuh TensorFlow) -- lihat processing-server/README.md.
 """
 
 import sys
 import json
+import time
 
 sys.path.append("..")
 from shared.mqtt_connection import create_client, topic
@@ -21,8 +29,31 @@ latest_readings = {}
 def on_audio_message(client, userdata, msg):
     payload = json.loads(msg.payload.decode())
     print(f"[audio] {payload}")
-    # TODO: panggil classify_audio.classify_glass_break(...) / liveness check,
-    # lalu publish AlertMessage kalau lolos semua pengecekan.
+
+    device_id = payload.get("device_id", "unknown")
+    rms = payload.get("rms_amplitude")
+    freq = payload.get("dominant_freq_hz")
+    duration = payload.get("duration_s")
+
+    if rms is None or freq is None or duration is None:
+        # Payload dari edge-audio belum lengkap (lihat shared/messages.py
+        # AudioReading) -- butuh rms_amplitude, dominant_freq_hz, duration_s
+        # semua terisi supaya classify_glass_break bisa jalan.
+        print(f"[audio] payload belum lengkap (butuh rms_amplitude, dominant_freq_hz, "
+              f"duration_s), dilewati: {payload}")
+        return
+
+    result = classify_audio.classify_glass_break(rms, freq, duration)
+    print(f"[audio] classify_glass_break -> {result}")
+
+    # TODO (Annis): sebelum publish alert, panggil liveness check di sini dulu
+    # (classify_audio.liveness_check_context / liveness_check_amplitude_ratio)
+    # supaya suara TV/media tidak memicu alert palsu -- lihat Bab 5.2.1.1.
+    # Butuh minimal 2 HP terpasang untuk amplitude_ratio.
+
+    if result["is_glass_break"]:
+        publish_alert(client, event_type="glass_break",
+                       confidence=result["confidence"], source=device_id)
 
 
 def on_env_message(client, userdata, msg):
@@ -56,7 +87,7 @@ def main():
 
     try:
         while True:
-            pass
+            time.sleep(1)  # loop MQTT jalan di thread lain (loop_start()), ini cuma nahan proses hidup
     except KeyboardInterrupt:
         print("Berhenti.")
     finally:

@@ -14,6 +14,7 @@ class AudioReading:
     device_id: str          # "hpA" atau "hpB"
     rms_amplitude: float    # hasil pre-filter tahap 1
     dominant_freq_hz: float | None = None
+    duration_s: float | None = None   # panjang window rekaman, dipakai classify_glass_break (Bab 5.2.1)
     timestamp: float = None
 
     def __post_init__(self):
