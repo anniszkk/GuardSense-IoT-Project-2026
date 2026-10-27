@@ -58,7 +58,12 @@ def load_wav_mono_float(path: str):
 
     data = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
     if n_channels > 1:
-        data = data.reshape(-1, n_channels).mean(axis=1)
+        # Pilih channel dengan RMS terbesar, JANGAN rata-ratakan -- lihat
+        # catatan yang sama di edge-audio/test_prefilter_local.py (phase
+        # cancellation kalau channel-channelnya tidak sefase).
+        data = data.reshape(-1, n_channels)
+        channel_rms = np.sqrt(np.mean(np.square(data, dtype=np.float64), axis=0))
+        data = data[:, int(np.argmax(channel_rms))]
     data /= 32768.0
     return data, sample_rate
 

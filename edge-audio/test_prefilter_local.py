@@ -40,7 +40,14 @@ def load_wav_mono_float(path: str):
 
     data = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
     if n_channels > 1:
-        data = data.reshape(-1, n_channels).mean(axis=1)  # mix ke mono
+        # PENTING: JANGAN rata-ratakan channel (mean) -- kalau rekaman stereo
+        # dua channelnya tidak sefase, rata-rata bisa saling membatalkan
+        # sinyal (phase cancellation), sampai suara yang jelas kedengeran pas
+        # didengerin malah nyaris hilang di hasil analisa. Pilih channel yang
+        # RMS-nya (energinya) paling besar saja, lebih aman.
+        data = data.reshape(-1, n_channels)
+        channel_rms = np.sqrt(np.mean(np.square(data, dtype=np.float64), axis=0))
+        data = data[:, int(np.argmax(channel_rms))]
     data /= 32768.0  # normalisasi ke rentang -1..1
     return data, sample_rate
 

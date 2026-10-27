@@ -54,7 +54,13 @@ def _load_wav_mono_float(path: str):
 
     data = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
     if n_channels > 1:
-        data = data.reshape(-1, n_channels).mean(axis=1)
+        # Jaga-jaga kalau suatu saat WAV masuk sini masih multi-channel
+        # (normalnya sudah mono dari ffmpeg "pan=mono|c0=c0"): pilih channel
+        # RMS terbesar, JANGAN rata-ratakan (lihat catatan phase cancellation
+        # di convert_to_16k's ffmpeg command di atas).
+        data = data.reshape(-1, n_channels)
+        channel_rms = np.sqrt(np.mean(np.square(data, dtype=np.float64), axis=0))
+        data = data[:, int(np.argmax(channel_rms))]
     data /= 32768.0
     return data, sample_rate
 
@@ -110,9 +116,14 @@ def record_audio_window():
             "sudah diberikan ke aplikasi itu."
         )
 
+    # PENTING: pakai filter "pan=mono|c0=c0" (ambil channel kiri aja), BUKAN
+    # "-ac 1" biasa -- "-ac 1" merata-ratakan kedua channel, dan kalau
+    # rekaman stereo-nya tidak sefase (kejadian nyata di HP, lihat debugging
+    # bareng user), rata-rata itu bisa saling membatalkan sinyalnya (phase
+    # cancellation) sampai nyaris hilang. Ambil 1 channel saja lebih aman.
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", _RECORD_PATH,
-         "-ar", "44100", "-ac", "1", "-sample_fmt", "s16", _WAV_PATH],
+         "-ar", "44100", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
         check=True,
     )
 
