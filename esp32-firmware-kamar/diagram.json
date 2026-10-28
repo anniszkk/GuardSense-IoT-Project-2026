@@ -15,7 +15,7 @@
     [ "dht22:SDA", "esp:4", "green", [] ],
     [ "gas1:VCC", "esp:5V", "red", [] ],
     [ "gas1:GND", "esp:GND.2", "black", [] ],
-    [ "gas1:AO", "esp:34", "orange", [] ]
+    [ "gas1:AOUT", "esp:34", "orange", [] ]
   ],
   "dependencies": {}
 }

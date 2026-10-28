@@ -23,7 +23,8 @@ float lastGasValue = 0;
 float lastTempValue = 0;
 bool hasPreviousReading = false;
 
-unsigned long lastReadMillis = 0;
+unsigned long lastReadMillis = 0;    // jadwal baca sensor (tiap 2 detik)
+unsigned long lastSampleMillis = 0;  // waktu sampel VALID terakhir, dasar hitung laju
 
 void connectWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -75,8 +76,9 @@ void publishReading(
                    "\",\"gas_ppm_est\":" + String(gasValue, 2) +
                    ",\"gas_rate_of_rise\":" + String(gasRate, 2) +
                    ",\"temperature_c\":" + String(tempC, 2) +
-                   ",\"temp_rate_of_rise\":" + String(tempRate, 2) +
-                   ",\"timestamp\":" + String(millis()) + "}";
+                   ",\"temp_rate_of_rise\":" + String(tempRate, 2) + "}";
+  // Tanpa timestamp: millis() hanya waktu sejak nyala, bukan epoch.
+  // Server mencatat waktu saat pesan tiba.
 
   bool success = mqttClient.publish(topic.c_str(), payload.c_str());
 
@@ -113,10 +115,6 @@ void loop() {
     return;
   }
 
-  float dtSeconds = lastReadMillis == 0
-      ? 0.0
-      : (now - lastReadMillis) / 1000.0;
-
   lastReadMillis = now;
 
   float gasValue = readGasPpmEstimate();
@@ -126,6 +124,13 @@ void loop() {
     Serial.println("Gagal membaca DHT22. Sampel dilewati.");
     return;
   }
+
+  // Selang dihitung dari sampel valid terakhir, supaya sampel yang
+  // dilewati tidak membuat laju terlihat dua kali lebih besar.
+  float dtSeconds = hasPreviousReading
+      ? (now - lastSampleMillis) / 1000.0
+      : 0.0;
+  lastSampleMillis = now;
 
   float gasRate = 0.0;
   float tempRate = 0.0;
@@ -145,13 +150,13 @@ void loop() {
   bool tempRising = tempRate >= TEMP_RATE_THRESHOLD;
 
   Serial.println("------------------------------");
-  Serial.printf("Gas ADC: %.2f\n", gasValue);
-  Serial.printf("Suhu: %.2f C\n", tempC);
-  Serial.printf("Laju gas: %.2f ADC/detik\n", gasRate);
-  Serial.printf("Laju suhu: %.2f C/detik\n", tempRate);
-  Serial.printf("Gas melewati ambang: %s\n",
+  Serial.printf("Gas ADC: %.2f\r\n", gasValue);
+  Serial.printf("Suhu: %.2f C\r\n", tempC);
+  Serial.printf("Laju gas: %.2f ADC/detik\r\n", gasRate);
+  Serial.printf("Laju suhu: %.2f C/detik\r\n", tempRate);
+  Serial.printf("Gas melewati ambang: %s\r\n",
                 gasRising ? "YA" : "TIDAK");
-  Serial.printf("Suhu melewati ambang: %s\n",
+  Serial.printf("Suhu melewati ambang: %s\r\n",
                 tempRising ? "YA" : "TIDAK");
 
   // Kirim jika salah satu indikator melewati ambang.
