@@ -21,7 +21,7 @@ publik (freesound dll), bukan rekaman lewat mic HP yang sebenarnya dipakai.
 
 # TODO: validasi ulang pakai rekaman HP asli (Bab 9).
 FREQ_THRESHOLD_HZ = 3000.0  # kaca pecah: dominant freq biasanya > 3-4 kHz
-MIN_RMS = 0.02  # selaras dengan AMPLITUDE_THRESHOLD di edge-audio/prefilter.py
+MIN_RMS = 0.005  # selaras dengan AMPLITUDE_THRESHOLD di edge-audio/prefilter.py
 MAX_DURATION_S = 3.0  # pecahan kaca adalah event singkat (transient)
 
 

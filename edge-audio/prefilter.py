@@ -23,7 +23,12 @@ import numpy as np
 
 # Ambang nyaris-hening, BUKAN ambang pembeda jenis suara (lihat docstring
 # di atas). Hasil kalibrasi awal, lihat Bab 9 untuk validasi ulang.
-AMPLITUDE_THRESHOLD = 0.02
+# Diturunkan 0.02 -> 0.005 setelah uji rekaman HP asli (kaca4/kaca5.m4a, 16 kHz):
+# RMS window 2 detik untuk kaca pecah cuma 0.007-0.023 (event singkat "diencerkan"
+# bising sekitarnya), lebih RENDAH daripada bising angin/kendaraan di window lain
+# (0.009-0.013) dan jauh di bawah suara setelah kaca (disapu/diinjak, 0.05-0.09).
+# Jadi RMS tidak bisa membedakan; gerbang ini cuma membuang keheningan nyaris total.
+AMPLITUDE_THRESHOLD = 0.005
 
 
 def compute_rms(audio_samples: np.ndarray) -> float:

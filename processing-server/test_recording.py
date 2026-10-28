@@ -27,7 +27,7 @@ from shared.audio_features import high_band_ratio
 SR = 16000
 WINDOW_S = 2.0
 HOP_S = 1.0
-RMS_GATE = 0.02  # sama dengan AMPLITUDE_THRESHOLD di edge-audio/prefilter.py
+RMS_GATE = 0.005  # sama dengan AMPLITUDE_THRESHOLD di edge-audio/prefilter.py
 
 
 def load_16k_mono(path: str) -> np.ndarray:
