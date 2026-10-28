@@ -67,6 +67,11 @@ def _load_wav_mono_float(path: str):
     return data, sample_rate
 
 
+# Rincian waktu siklus rekam terakhir (detik), dicetak di main() -- buat cari tahu
+# kenapa satu siklus ~7 detik padahal window cuma 2 detik (jeda tak terekam = event bisa lolos).
+_last_timing = ""
+
+
 def record_audio_window():
     """Rekam audio WINDOW_SECONDS detik lewat termux-microphone-record,
     kembalikan (samples: np.ndarray mono float -1..1, sample_rate: int).
@@ -75,6 +80,8 @@ def record_audio_window():
     support encoder aac/amr_nb/amr_wb/opus -- jadi direkam ke .m4a (AAC)
     dulu, baru di-convert ke .wav 16-bit PCM pakai ffmpeg.
     """
+    global _last_timing
+    t0 = time.time()
     for p in (_RECORD_PATH, _WAV_PATH):
         if os.path.exists(p):
             os.remove(p)  # hapus sisa rekaman sebelumnya, supaya tidak salah baca file lama
@@ -104,6 +111,7 @@ def record_audio_window():
             "Gagal mulai rekaman baru setelah beberapa percobaan -- ada rekaman lama "
             "yang tidak mau berhenti. Coba jalankan manual: termux-microphone-record -q"
         )
+    t_started = time.time()
     # termux-microphone-record cuma mengirim perintah ke background service lalu
     # langsung return -- rekaman baru benar-benar selesai setelah WINDOW_SECONDS.
     time.sleep(WINDOW_SECONDS)
@@ -114,6 +122,7 @@ def record_audio_window():
     # quit/stop manual dulu supaya filenya valid.
     subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
     time.sleep(0.5)  # beri waktu file selesai ditulis ke disk
+    t_stopped = time.time()
 
     if not os.path.exists(_RECORD_PATH):
         raise RuntimeError(
@@ -132,8 +141,12 @@ def record_audio_window():
          "-ar", "16000", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
         check=True,
     )  # 16 kHz = syarat input YAMNet, dan klipnya jadi kecil (~64 KB / 2 detik)
+    t_converted = time.time()
 
-    return _load_wav_mono_float(_WAV_PATH)
+    result = _load_wav_mono_float(_WAV_PATH)
+    _last_timing = (f"mulai={t_started - t0:.1f}s rekam+stop={t_stopped - t_started:.1f}s "
+                    f"ffmpeg={t_converted - t_stopped:.1f}s")
+    return result
 
 
 def main():
@@ -143,6 +156,7 @@ def main():
 
     try:
         while True:
+            t_cycle = time.time()
             samples, sample_rate = record_audio_window()
             rms = compute_rms(samples)
 
@@ -164,7 +178,8 @@ def main():
                 # satu (bukan JSON valid) dan bikin server.py gagal parse
                 # lewat json.loads().
                 client.publish(topic(f"edge/{DEVICE_ID}/audio"), json.dumps(reading.to_dict()))
-                print(f"[{DEVICE_ID}] Terkirim: rms={rms:.3f} freq={freq:.1f} dur={duration_s:.2f}")
+                print(f"[{DEVICE_ID}] Terkirim: rms={rms:.3f} freq={freq:.1f} dur={duration_s:.2f} "
+                      f"| {_last_timing} total={time.time() - t_cycle:.1f}s")
 
             time.sleep(0.1)
     except KeyboardInterrupt:
