@@ -25,6 +25,11 @@ bool hasPreviousReading = false;
 
 unsigned long lastReadMillis = 0;    // jadwal baca sensor (tiap 2 detik)
 unsigned long lastSampleMillis = 0;  // waktu sampel VALID terakhir, dasar hitung laju
+unsigned long lastPublishMillis = 0; // waktu pesan terakhir terkirim (lonjakan atau heartbeat)
+
+// Saat tenang tetap kirim satu pesan tiap 10 detik (heartbeat), supaya server tahu
+// node ini masih hidup (server menganggap online bila ada pesan dalam 15 detik).
+const unsigned long HEARTBEAT_MS = 10000;
 
 void connectWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -159,8 +164,9 @@ void loop() {
   Serial.printf("Suhu melewati ambang: %s\r\n",
                 tempRising ? "YA" : "TIDAK");
 
-  // Kirim jika salah satu indikator melewati ambang.
-  if (gasRising || tempRising) {
+  // Kirim jika salah satu indikator melewati ambang, atau sebagai heartbeat.
+  if (gasRising || tempRising || now - lastPublishMillis >= HEARTBEAT_MS) {
     publishReading(gasValue, gasRate, tempC, tempRate);
+    lastPublishMillis = now;
   }
 }
