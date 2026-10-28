@@ -201,28 +201,29 @@ def main_continuous():
     try:
         while True:
             t0 = time.time()
-            pcm = cap.decode()
+            seg_start = extractor.next_start
+            pcm = cap.decode(seg_start / continuous_capture.SR)   # hanya bagian yang belum diproses
             t_decode = time.time() - t0
 
             # Rekaman harus tumbuh. Kalau kosong terus, Termux:API/izin mic bermasalah.
             empty_polls = empty_polls + 1 if len(pcm) == 0 else 0
-            if empty_polls >= 5:
+            if empty_polls >= 8:
                 raise RuntimeError(
                     "File rekaman kosong/tidak tumbuh. Cek izin mikrofon Termux:API, atau coba "
                     "EDGE_MODE=window python hp_edge.py"
                 )
 
-            for clip in extractor.feed(pcm):
+            for clip in extractor.feed(pcm, seg_start):
                 rms, freq = publish_clip(client, clip, continuous_capture.SR)
                 print(f"[{DEVICE_ID}] Terkirim klip {len(clip) / continuous_capture.SR:.1f}s: "
                       f"rms={rms:.3f} freq={freq:.1f} | decode={t_decode:.2f}s "
-                      f"rekaman={len(pcm) / continuous_capture.SR:.0f}s")
+                      f"rekaman~{extractor.next_start_s:.0f}s")
 
-            # Mulai ulang file tiap ROTATE_S supaya decode (seluruh file) tidak makin berat.
-            # Ada celah ~1-2 detik saat pergantian (satu kali per menit).
-            if len(pcm) / continuous_capture.SR > continuous_capture.ROTATE_S:
+            # Mulai ulang file tiap ROTATE_S (~30 menit) supaya file tidak membengkak.
+            # Ada celah ~5-9 detik saat pergantian, tapi cuma sekali per ROTATE_S.
+            if extractor.next_start_s > continuous_capture.ROTATE_S:
                 cap.stop()
-                cap.start()
+                cap.start(cleanup=False)
                 extractor = continuous_capture.StrideExtractor()
 
             time.sleep(max(0.05, 1.0 - (time.time() - t0)))

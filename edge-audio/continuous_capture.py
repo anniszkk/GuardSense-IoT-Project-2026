@@ -29,23 +29,36 @@ SR = 16000
 WIN_S = 3.0               # panjang klip yang dikirim
 STRIDE_S = 2.0            # jarak antar klip (WIN_S - STRIDE_S = tumpang-tindih)
 MIN_RMS = 0.005           # klip dengan RMS rata-rata di bawah ini = hening, tidak dikirim
-ROTATE_S = 60.0           # file rekaman dimulai ulang tiap ~60 detik (decode tidak membengkak)
+ROTATE_S = 1800.0         # file rekaman dimulai ulang tiap ~30 menit (cuma supaya file tidak membengkak;
+                          # decode tidak bergantung panjang file karena dibaca dari offset, lihat decode())
 
 
 class StrideExtractor:
-    """feed(pcm_penuh_sejauh_ini) -> list klip yang SUDAH lengkap dan tidak hening.
+    """feed(pcm, seg_start) -> list klip yang SUDAH lengkap dan tidak hening.
 
-    pcm = seluruh sinyal file rekaman saat ini (float32 mono 16 kHz), bertambah tiap poll.
+    pcm = potongan sinyal (float32 mono 16 kHz) yang DIMULAI di sampel absolut `seg_start`
+    dari awal file rekaman -- bukan seluruh file (lihat FileCapture.decode). Pemanggil
+    mendecode mulai dari `next_start_s` supaya biaya baca tidak tumbuh bersama file.
     """
 
     def __init__(self):
-        self.next_start = 0
+        self.next_start = 0   # sampel absolut awal klip berikutnya
 
-    def feed(self, pcm: np.ndarray) -> list:
+    @property
+    def next_start_s(self) -> float:
+        return self.next_start / SR
+
+    def feed(self, pcm: np.ndarray, seg_start: int = 0) -> list:
         win, stride = int(WIN_S * SR), int(STRIDE_S * SR)
+        if self.next_start < seg_start:
+            # Potongan dimulai setelah klip berikutnya (data hilang): lompat ke awal potongan.
+            self.next_start = seg_start
         clips = []
-        while len(pcm) >= self.next_start + win:
-            clip = pcm[self.next_start:self.next_start + win]
+        while True:
+            lo = self.next_start - seg_start
+            if lo + win > len(pcm):
+                break
+            clip = pcm[lo:lo + win]
             self.next_start += stride
             if float(np.sqrt(np.mean(np.square(clip, dtype=np.float64)))) >= MIN_RMS:
                 clips.append(clip.copy())
@@ -59,10 +72,13 @@ class FileCapture:
         self.path = path
         self.device_id = device_id
 
-    def start(self):
-        # "-q" sekali di awal: bersihkan rekaman nyangkut dari run sebelumnya.
-        subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
-        time.sleep(0.5)
+    def start(self, cleanup: bool = True):
+        """cleanup=True: "-q" + jeda dulu (bersihkan rekaman nyangkut dari run sebelumnya).
+        cleanup=False dipakai saat rotasi: rekaman lama baru saja di-stop(), langsung start
+        supaya celah rotasi pendek (tiap panggilan termux-api ~1 detik)."""
+        if cleanup:
+            subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
+            time.sleep(0.5)
         if os.path.exists(self.path):
             os.remove(self.path)
         for attempt in range(5):
@@ -81,15 +97,19 @@ class FileCapture:
             time.sleep(0.5)
         raise RuntimeError("Gagal mulai rekaman. Coba manual: termux-microphone-record -q")
 
-    def decode(self) -> np.ndarray:
-        """Decode seluruh file yang sudah tertulis -> float32 mono 16 kHz.
+    def decode(self, start_s: float = 0.0) -> np.ndarray:
+        """Decode file yang sudah tertulis, MULAI dari detik `start_s` -> float32 mono 16 kHz.
+
+        Dibaca dari offset (ffmpeg -ss sebelum -i = seek akurat), jadi biaya per poll hanya
+        beberapa detik audio terakhir berapa pun panjang file -- tidak perlu merotasi file
+        tiap menit (rotasi = celah ~9 detik tanpa rekaman).
         Halaman Ogg terakhir bisa belum lengkap: ffmpeg bisa mengeluh, jadi pakai
         stdout apa adanya walau return code bukan 0."""
         if not os.path.exists(self.path):
             return np.zeros(0, dtype=np.float32)
         r = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", self.path, "-af", "pan=mono|c0=c0",
-             "-ar", str(SR), "-f", "s16le", "-"],
+            ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, start_s):.3f}", "-i", self.path,
+             "-af", "pan=mono|c0=c0", "-ar", str(SR), "-f", "s16le", "-"],
             capture_output=True,
         )
         raw = r.stdout[: len(r.stdout) // 2 * 2]
