@@ -3,8 +3,7 @@
 Cara pakai (dari folder processing-server, venv aktif):
     python test_recording.py rekaman1.m4a rekaman2.wav ...
 
-Tiap file dipotong jadi window 2 detik (geser 1 detik, mirip window di
-hp_edge.py), lalu tiap window dijalankan lewat jalur yang sama dengan server:
+Tiap file dipotong jadi window 3 detik (geser 1 detik; HP mengirim klip 3 detik tiap 2 detik), lalu tiap window dijalankan lewat jalur yang sama dengan server:
 gerbang RMS -> YAMNet (skor kaca + konteks TV/Speech/Music) dan fallback
 rule-based (rasio band tinggi) sebagai pembanding. Kolom `top3` = 3 kelas
 YAMNet dengan skor tertinggi di window itu, buat lihat apa yang "didengar" model.
@@ -25,7 +24,7 @@ import classify_audio
 from shared.audio_features import high_band_ratio
 
 SR = 16000
-WINDOW_S = 2.0
+WINDOW_S = 3.0  # sama dengan WIN_S di edge-audio/continuous_capture.py
 HOP_S = 1.0
 RMS_GATE = 0.005  # sama dengan AMPLITUDE_THRESHOLD di edge-audio/prefilter.py
 
@@ -61,25 +60,30 @@ def main():
     for path in sys.argv[1:]:
         x = load_16k_mono(path)
         print(f"\n=== {path}  ({len(x) / SR:.1f} detik) ===")
-        print(f"{'t(s)':>5} {'rms':>6} {'gate':>5} {'yamnet':>7} {'glass':>5} {'media':>5} "
-              f"{'hf':>5} {'rule':>5}  top3")
+        print(f"{'t(s)':>5} {'rms':>6} {'gate':>5} {'yamnet':>7} {'glass':>5} {'alarm':>6} {'ALM':>4} {'beep':>4} "
+              f"{'media':>5} {'hf':>5} {'rule':>5}  top3")
         starts = range(0, max(1, len(x) - win + 1), hop)
-        n_glass = 0
+        n_glass = n_alarm = 0
         for s in starts:
             w = x[s:s + win]
             rms = float(np.sqrt(np.mean(np.square(w, dtype=np.float64))))
             y = classify_audio.analyze_yamnet(w)
             is_glass = y["glass_score"] > classify_audio.YAMNET_CONFIDENCE_THRESHOLD
+            is_alarm = y["alarm_score"] > classify_audio.ALARM_CONFIDENCE_THRESHOLD
+            is_beep = classify_audio.detect_beep_train(w)["is_beep_train"]
             is_media = classify_audio.liveness_check_context(y["media_scores"])
             rule = classify_audio.classify_glass_break_hf(w)
             gate = rms > RMS_GATE
             n_glass += int(is_glass and gate)
+            n_alarm += int((is_alarm or is_beep) and gate)
             print(f"{s / SR:5.1f} {rms:6.3f} {'ya' if gate else 'tdk':>5} {y['glass_score']:7.2f} "
-                  f"{'YA' if is_glass else '-':>5} {'TV?' if is_media else '-':>5} "
+                  f"{'YA' if is_glass else '-':>5} {y['alarm_score']:6.2f} {'YA' if is_alarm else '-':>4} {'YA' if is_beep else '-':>4} "
+                  f"{'TV?' if is_media else '-':>5} "
                   f"{high_band_ratio(w, SR):5.2f} {'YA' if rule['is_glass_break'] else '-':>5}  "
                   f"{top3(w, model, names)}")
-        print(f"-> window lolos gerbang RMS & YAMNet bilang kaca: {n_glass}")
-        print("   (kolom 'gate' = apakah edge akan mengirim window ini; 'rule' = hasil fallback)")
+        print(f"-> window lolos gerbang RMS & YAMNet bilang kaca: {n_glass}, bilang alarm (YAMNet atau pola beep): {n_alarm}")
+        print("   (kolom 'gate' = apakah edge akan mengirim window ini; 'rule' = hasil fallback KACA, "
+              "yang tonal seperti alarm pun terbaca 'YA' di sana)")
 
 
 if __name__ == "__main__":
