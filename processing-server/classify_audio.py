@@ -57,9 +57,11 @@ GLASS_BREAK_CLASS_NAMES = {"Glass", "Chink, clink", "Shatter"}
 # Kelas konteks untuk liveness check bagian A (Bab 5.2.1.1).
 MEDIA_CLASS_NAMES = {"Television", "Speech", "Music"}
 
-# TODO: kalibrasi ambang ini pakai klip audio nyata (Bab 9) -- jalankan
-# test_yamnet_batch.py. 0.5: di sampel publik kaca >=0.69, non-event <=0.39.
-YAMNET_CONFIDENCE_THRESHOLD = 0.5
+# TODO: validasi dengan kaca sungguhan (bukan sampel lewat speaker) -- Bab 9.
+# 0.35: dari rekaman mic HP (16 kHz), klip non-kaca <= 0.23 (uji live) / <= 0.18 (negatif1-9),
+# sedangkan klip kaca jatuh di 0.37-0.97 tergantung posisi di dalam klip (kaca4: 0.82 vs 0.45).
+# Dulu 0.5, tapi banyak klip kaca nyaris lolos di 0.37-0.49.
+YAMNET_CONFIDENCE_THRESHOLD = 0.35
 # Skor konteks TV/Speech/Music (rata-rata sepanjang klip) di atas ini -> dianggap media.
 MEDIA_CONTEXT_THRESHOLD = 0.3
 
