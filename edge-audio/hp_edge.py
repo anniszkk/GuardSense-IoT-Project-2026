@@ -1,6 +1,12 @@
 """Jalan di HP A dan HP B lewat Termux (python hp_edge.py).
 Rekam audio -> pre-filter -> publish ke MQTT kalau lolos ambang.
 
+Dua mode (env EDGE_MODE, default "continuous"):
+  continuous : rekam terus tanpa jeda, kirim klip yang tidak hening, tumpang-tindih;
+               klip 3 detik tiap 2 detik (lihat continuous_capture.py). Tidak ada celah.
+  window     : mode lama, rekam 2 detik -> stop -> ulang (ada jeda ~1.3-2.5 detik
+               tiap siklus). Cadangan kalau opus/rekam-terus bermasalah di HP.
+
 TODO (Annis):
   1. Ganti DEVICE_ID jadi "hpA" di HP pertama, "hpB" di HP kedua.
 
@@ -27,6 +33,7 @@ from shared.mqtt_connection import create_client, topic
 from shared.messages import AudioReading
 from shared.audio_features import high_band_ratio
 from prefilter import compute_rms, compute_dominant_frequency, should_send
+import continuous_capture
 
 # TODO: ganti sesuai HP ("hpA" di satu HP, "hpB" di HP satunya)
 DEVICE_ID = "hpA"
@@ -152,6 +159,81 @@ def record_audio_window():
     return result
 
 
+def _wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
+    """float -1..1 mono -> WAV 16-bit PCM di memori (format yang diharapkan decode_clip server)."""
+    import io
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes((np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+    return buf.getvalue()
+
+
+def publish_clip(client, samples: np.ndarray, sample_rate: int):
+    """Hitung fitur klip lalu publish ke MQTT (dipakai mode continuous)."""
+    rms = compute_rms(samples)
+    freq = compute_dominant_frequency(samples, sample_rate)
+    reading = AudioReading(
+        device_id=DEVICE_ID,
+        rms_amplitude=rms,
+        dominant_freq_hz=freq,
+        duration_s=len(samples) / sample_rate,
+        high_band_ratio=high_band_ratio(samples, sample_rate),
+        sample_rate=sample_rate,
+        clip_b64=base64.b64encode(_wav_bytes(samples, sample_rate)).decode("ascii"),
+    )
+    client.publish(topic(f"edge/{DEVICE_ID}/audio"), json.dumps(reading.to_dict()))
+    return rms, freq
+
+
+def main_continuous():
+    client = create_client(role=DEVICE_ID)
+    client.loop_start()
+    cap = continuous_capture.FileCapture("_rec_live.ogg", DEVICE_ID)
+    cap.start()
+    extractor = continuous_capture.StrideExtractor()
+    started_at = time.time()
+    empty_polls = 0
+    print(f"[{DEVICE_ID}] Mode continuous: merekam terus, kirim klip 3 detik tiap 2 detik...")
+
+    try:
+        while True:
+            t0 = time.time()
+            pcm = cap.decode()
+            t_decode = time.time() - t0
+
+            # Rekaman harus tumbuh. Kalau kosong terus, Termux:API/izin mic bermasalah.
+            empty_polls = empty_polls + 1 if len(pcm) == 0 else 0
+            if empty_polls >= 5:
+                raise RuntimeError(
+                    "File rekaman kosong/tidak tumbuh. Cek izin mikrofon Termux:API, atau coba "
+                    "EDGE_MODE=window python hp_edge.py"
+                )
+
+            for clip in extractor.feed(pcm):
+                rms, freq = publish_clip(client, clip, continuous_capture.SR)
+                print(f"[{DEVICE_ID}] Terkirim klip {len(clip) / continuous_capture.SR:.1f}s: "
+                      f"rms={rms:.3f} freq={freq:.1f} | decode={t_decode:.2f}s "
+                      f"rekaman={len(pcm) / continuous_capture.SR:.0f}s")
+
+            # Mulai ulang file tiap ROTATE_S supaya decode (seluruh file) tidak makin berat.
+            # Ada celah ~1-2 detik saat pergantian (satu kali per menit).
+            if len(pcm) / continuous_capture.SR > continuous_capture.ROTATE_S:
+                cap.stop()
+                cap.start()
+                extractor = continuous_capture.StrideExtractor()
+
+            time.sleep(max(0.05, 1.0 - (time.time() - t0)))
+    except KeyboardInterrupt:
+        print(f"[{DEVICE_ID}] Berhenti.")
+    finally:
+        cap.stop()
+        client.loop_stop()
+        client.disconnect()
+
+
 def main():
     client = create_client(role=DEVICE_ID)
     client.loop_start()
@@ -193,4 +275,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if os.getenv("EDGE_MODE", "continuous").lower() == "window":
+        main()
+    else:
+        main_continuous()
