@@ -68,8 +68,9 @@ class FileCapture:
         for attempt in range(5):
             r = subprocess.run(
                 # -l 0 = tanpa batas waktu. -r 16000 WAJIB (default 8 kHz membuang suara > 4 kHz).
+                # -b 96: opus 48 kbps diduga meredam transient frekuensi tinggi (kaca) -> skor YAMNet turun.
                 ["termux-microphone-record", "-f", self.path, "-l", "0", "-e", "opus",
-                 "-r", "16000", "-b", "48", "-c", "1"],
+                 "-r", "16000", "-b", "96", "-c", "1"],
                 capture_output=True, text=True,
             )
             out = (r.stdout + r.stderr).lower()
