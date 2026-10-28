@@ -8,8 +8,10 @@ utama, rule-based cadangan), liveness check bagian A (konteks TV/bicara/musik di
 dan bagian B (rasio RMS antar HP, butuh 2 HP aktif; ambang belum dikalibrasi), lalu cooldown alert.
 """
 
-import sys
+import base64
 import json
+import os
+import sys
 import time
 
 sys.path.append("..")
@@ -21,6 +23,11 @@ import classify_fire
 
 # TODO (Lila): simpan state terakhir tiap device di sini (untuk dashboard & rate-of-rise)
 latest_readings = {}
+
+# Debug: kalau env SAVE_CLIPS_DIR diisi, setiap klip audio yang masuk disimpan sebagai .wav di folder itu
+# (nama berisi jam, device, skor kaca/alarm), supaya klip yang salah deteksi bisa dinilai ulang offline
+# lewat test_recording.py. ~64 KB per detik, jadi hanya untuk sesi uji.
+SAVE_CLIPS_DIR = os.getenv("SAVE_CLIPS_DIR")
 
 # Jeda minimum antar alert untuk (device, jenis event) yang sama.
 ALERT_COOLDOWN_S = 10.0
@@ -86,10 +93,14 @@ def on_audio_message(client, userdata, msg):
 
     # YAMNet utama, rule-based fallback (lihat classify_audio.classify_audio_clip).
     result = classify_audio.classify_audio_clip(payload)
+    ring = result.get("ring_scores") or {}
     print(f"[audio] {device_id} -> method={result['method']} glass={result['is_glass_break']} "
-          f"conf={result['confidence']:.2f} alarm={result['is_alarm']} alarm_conf={result['alarm_confidence']:.2f} "
+          f"conf={result['confidence']:.2f} alarm={result['is_alarm']}({result.get('alarm_source')}) "
+          f"alarm_conf={result['alarm_confidence']:.2f} clock={result.get('alarm_clock_score', 0.0):.2f} "
+          f"ding={ring.get('Ding', 0.0):.2f} bell={ring.get('Bell', 0.0):.2f} "
           f"media={result['is_media']}"
           + (f" (fallback: {result['fallback_reason']})" if result["fallback_reason"] else ""))
+    _save_clip(payload, device_id, result)
 
     # Dua jenis kejadian audio dengan logika liveness dan cooldown yang sama (jenis alert beda).
     if result["is_glass_break"]:
@@ -99,6 +110,22 @@ def on_audio_message(client, userdata, msg):
         # berpola sama, jadi diberi label "perlu verifikasi" (alert tidak dibuang).
         extra = ["beep_pattern"] if result.get("alarm_source") == "beep_pattern" else []
         _emit_audio_alert(client, device_id, "fire_alarm", result["alarm_confidence"], result, rms, now, extra)
+
+
+def _save_clip(payload: dict, device_id: str, result: dict):
+    """Simpan klip ke SAVE_CLIPS_DIR (debug). Gagal menyimpan tidak boleh mengganggu klasifikasi."""
+    if not SAVE_CLIPS_DIR or not payload.get("clip_b64"):
+        return
+    try:
+        os.makedirs(SAVE_CLIPS_DIR, exist_ok=True)
+        tag = "kaca" if result["is_glass_break"] else ""
+        tag += ("alarm-" + str(result.get("alarm_source"))) if result["is_alarm"] else ""
+        name = (f"{time.strftime('%H%M%S')}_{device_id}_g{result['confidence']:.2f}"
+                f"_a{result['alarm_confidence']:.2f}_{tag or 'none'}.wav")
+        with open(os.path.join(SAVE_CLIPS_DIR, name), "wb") as f:
+            f.write(base64.b64decode(payload["clip_b64"]))
+    except Exception as e:
+        print(f"[audio] gagal menyimpan klip: {type(e).__name__}: {e}")
 
 
 def _emit_audio_alert(client, device_id: str, base_type: str, confidence: float, result: dict, rms, now: float,
