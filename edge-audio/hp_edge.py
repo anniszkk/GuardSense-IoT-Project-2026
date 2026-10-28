@@ -195,7 +195,6 @@ def main_continuous():
     cap = continuous_capture.FileCapture("_rec_live.ogg", DEVICE_ID)
     cap.start()
     extractor = continuous_capture.StrideExtractor()
-    started_at = time.time()
     empty_polls = 0
     print(f"[{DEVICE_ID}] Mode continuous: merekam terus, kirim klip 3 detik tiap 2 detik...")
 

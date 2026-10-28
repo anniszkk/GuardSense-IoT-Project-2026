@@ -1,22 +1,18 @@
-"""Pre-filtering tahap 1 untuk audio (Bab 5.1).
+"""Fitur audio sederhana di edge (Bab 5.1): RMS dan frekuensi dominan.
 
-compute_rms dan compute_dominant_frequency sudah diisi (Annis).
+AMPLITUDE_THRESHOLD (0.005) hanya membuang keheningan nyaris total, BUKAN membedakan
+jenis suara. Pada rekaman mikrofon HP asli, RMS tidak bisa membedakan kaca pecah dari
+suara lain: klip kaca RMS-nya cuma 0.007-0.02, setara atau lebih pelan dari bising
+angin/kendaraan dan jauh lebih pelan dari suara sesudahnya (disapu/diinjak). Pembedaan
+kaca vs suara lain sepenuhnya dilakukan di processing-server (YAMNet; lihat
+processing-server/classify_audio.py dan docs Bab 5.1 serta 9.1).
 
-AMPLITUDE_THRESHOLD sudah dikalibrasi awal pakai sampel suara publik
-(lihat edge-audio/samples/ = kaca pecah, samples1/ = non-event, diuji
-lewat test_prefilter_local.py). Hasilnya: RMS sampel kaca pecah ada di
-rentang ~0.02-0.13, sedangkan sampel non-event (masak, pintu dibanting,
-dll) justru ada yang RMS-nya LEBIH TINGGI (~0.04-0.22). Jadi RMS di
-tahap ini TIDAK dipakai untuk membedakan jenis suara -- cuma untuk
-menyaring kondisi nyaris hening (misal room tone, RMS ~0.0035) biar
-tidak terus-menerus dikirim ke processing-server. Pembedaan kaca pecah
-vs suara lain dilakukan di tahap 2 (processing-server/classify_audio.py)
-pakai frekuensi dominan, yang jauh lebih bersih pemisahannya (lihat
-dokumentasi di file itu).
+compute_dominant_frequency hanya informasi tambahan di payload: pada window yang
+berisi bising rendah yang berlangsung terus (mic HP) hasilnya ~100 Hz walau ada kaca
+pecah, jadi tidak dipakai untuk keputusan.
 
-TODO: validasi ulang pakai rekaman HP asli di posisi pemasangan
-sebenarnya sebelum dipakai final (Bab 9, skenario 1-3) -- RMS sensitif
-terhadap jarak mic-sumber suara dan gain rekaman tiap perangkat.
+should_send dipakai mode "window" (EDGE_MODE=window); mode utama "continuous"
+memakai gerbang yang sama lewat continuous_capture.MIN_RMS.
 """
 
 import numpy as np
@@ -42,8 +38,8 @@ def compute_rms(audio_samples: np.ndarray) -> float:
 
 
 def compute_dominant_frequency(audio_samples: np.ndarray, sample_rate: int) -> float:
-    """Hitung frekuensi dominan lewat FFT. Dipakai untuk klasifikasi awal
-    (pecahan kaca biasanya > 3-4 kHz) -- lihat Bab 5.2.1.
+    """Hitung frekuensi dominan lewat FFT (informasi tambahan; tidak dipakai untuk
+    keputusan kaca, lihat docstring modul).
 
     Memakai window Hanning untuk mengurangi spectral leakage, dan
     mengabaikan bin DC (indeks 0) supaya tidak salah mendeteksi 0 Hz
