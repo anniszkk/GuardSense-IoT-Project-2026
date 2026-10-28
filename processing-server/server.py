@@ -491,6 +491,12 @@ def _run_flask():
     app.run(host="0.0.0.0", port=8000, debug=False, use_reloader=False)
 
 
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    print(f"[MQTT] connect: {reason_code}")
+    client.subscribe(topic("edge/+/audio"))
+    client.subscribe(topic("edge/+/env"))
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -501,6 +507,7 @@ def main():
     print("Dashboard web server berjalan di http://0.0.0.0:8000 (akses via localhost:8000)")
 
     client = create_client(role="processing-server")
+    client.on_connect = on_connect
     client.on_message = None  # callbacks set via message_callback_add
     client.message_callback_add(topic("edge/+/audio"), on_audio_message)
     client.message_callback_add(topic("edge/+/env"), on_env_message)
