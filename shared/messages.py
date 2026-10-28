@@ -15,6 +15,9 @@ class AudioReading:
     rms_amplitude: float    # hasil pre-filter tahap 1
     dominant_freq_hz: float | None = None
     duration_s: float | None = None   # panjang window rekaman, dipakai classify_glass_break (Bab 5.2.1)
+    high_band_ratio: float | None = None  # rasio energi >2 kHz (lihat shared/audio_features.py)
+    sample_rate: int | None = None    # sample rate klip (16000, syarat YAMNet)
+    clip_b64: str | None = None       # klip WAV 16-bit mono, base64 -- input YAMNet di server
     timestamp: float = None
 
     def __post_init__(self):
@@ -47,7 +50,7 @@ class EnvReading:
 @dataclass
 class AlertMessage:
     """Dipublish oleh processing-server ke topic alerts (Bab 5.2 & 6.2)."""
-    event_type: str          # "glass_break" | "fire_smoke" | "normal"
+    event_type: str          # "glass_break" | "glass_break_needs_verification" | "fire_smoke" | "normal"
     confidence: float        # 0.0 - 1.0
     location_hint: str | None = None   # misal "dapur", "kamar"
     source: str | None = None          # device_id yang memicu

@@ -31,28 +31,25 @@ def on_audio_message(client, userdata, msg):
     print(f"[audio] {payload}")
 
     device_id = payload.get("device_id", "unknown")
-    rms = payload.get("rms_amplitude")
-    freq = payload.get("dominant_freq_hz")
-    duration = payload.get("duration_s")
-
-    if rms is None or freq is None or duration is None:
-        # Payload dari edge-audio belum lengkap (lihat shared/messages.py
-        # AudioReading) -- butuh rms_amplitude, dominant_freq_hz, duration_s
-        # semua terisi supaya classify_glass_break bisa jalan.
-        print(f"[audio] payload belum lengkap (butuh rms_amplitude, dominant_freq_hz, "
-              f"duration_s), dilewati: {payload}")
+    if not payload.get("clip_b64") and any(
+            payload.get(k) is None for k in ("rms_amplitude", "dominant_freq_hz", "duration_s")):
+        # Tanpa klip, classify_audio_clip butuh ketiga fitur ini (lihat shared/messages.py AudioReading).
+        print(f"[audio] payload tidak punya klip dan fiturnya belum lengkap, dilewati: {device_id}")
         return
 
-    result = classify_audio.classify_glass_break(rms, freq, duration)
-    print(f"[audio] classify_glass_break -> {result}")
+    # YAMNet utama, rule-based fallback (lihat classify_audio.classify_audio_clip).
+    result = classify_audio.classify_audio_clip(payload)
+    print(f"[audio] {device_id} -> method={result['method']} glass={result['is_glass_break']} "
+          f"conf={result['confidence']:.2f} media={result['is_media']}"
+          + (f" (fallback: {result['fallback_reason']})" if result["fallback_reason"] else ""))
 
-    # TODO (Annis): sebelum publish alert, panggil liveness check di sini dulu
-    # (classify_audio.liveness_check_context / liveness_check_amplitude_ratio)
-    # supaya suara TV/media tidak memicu alert palsu -- lihat Bab 5.2.1.1.
-    # Butuh minimal 2 HP terpasang untuk amplitude_ratio.
+    # TODO (Annis): liveness bagian B (classify_audio.liveness_check_amplitude_ratio)
+    # butuh RMS terakhir dari HP lain -- tunggu latest_readings (Lila) dan 2 HP aktif.
 
     if result["is_glass_break"]:
-        publish_alert(client, event_type="glass_break",
+        # Bagian A liveness: terindikasi TV/media -> "perlu verifikasi", bukan ALERT penuh (Bab 5.2.1.1).
+        event_type = "glass_break_needs_verification" if result["is_media"] else "glass_break"
+        publish_alert(client, event_type=event_type,
                        confidence=result["confidence"], source=device_id)
 
 

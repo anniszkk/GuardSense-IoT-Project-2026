@@ -12,6 +12,7 @@ juga dari F-Droid, dan izin mikrofon harus diberikan ke app itu -- kalau
 tidak, record_audio_window() bakal gagal dengan RuntimeError di bawah.
 """
 
+import base64
 import os
 import json
 import subprocess
@@ -24,6 +25,7 @@ import numpy as np
 sys.path.append("..")  # supaya bisa import shared/
 from shared.mqtt_connection import create_client, topic
 from shared.messages import AudioReading
+from shared.audio_features import high_band_ratio
 from prefilter import compute_rms, compute_dominant_frequency, should_send
 
 # TODO: ganti sesuai HP ("hpA" di satu HP, "hpB" di HP satunya)
@@ -123,9 +125,9 @@ def record_audio_window():
     # cancellation) sampai nyaris hilang. Ambil 1 channel saja lebih aman.
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", _RECORD_PATH,
-         "-ar", "44100", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
+         "-ar", "16000", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
         check=True,
-    )
+    )  # 16 kHz = syarat input YAMNet, dan klipnya jadi kecil (~64 KB / 2 detik)
 
     return _load_wav_mono_float(_WAV_PATH)
 
@@ -143,11 +145,16 @@ def main():
             if should_send(rms):
                 freq = compute_dominant_frequency(samples, sample_rate)
                 duration_s = len(samples) / sample_rate
+                with open(_WAV_PATH, "rb") as f:
+                    clip_b64 = base64.b64encode(f.read()).decode("ascii")
                 reading = AudioReading(
                     device_id=DEVICE_ID,
                     rms_amplitude=rms,
                     dominant_freq_hz=freq,
                     duration_s=duration_s,
+                    high_band_ratio=high_band_ratio(samples, sample_rate),
+                    sample_rate=sample_rate,
+                    clip_b64=clip_b64,
                 )
                 # json.dumps, BUKAN str(dict) -- str(dict) pakai tanda kutip
                 # satu (bukan JSON valid) dan bikin server.py gagal parse

@@ -2,4 +2,7 @@ paho-mqtt>=2.0
 python-dotenv
 flask
 numpy
-# tensorflow / tensorflow-hub -- aktifkan kalau sudah mulai pakai YAMNet (opsional, Bab 5.2.1)
+# YAMNet = jalur utama klasifikasi audio. Kalau tidak terpasang, server otomatis fallback ke rule-based.
+tensorflow
+tensorflow-hub
+soundfile
