@@ -9,10 +9,11 @@ karena firmware hanya mengirim saat ada lonjakan (tidak ada pesan "sudah tenang"
 """
 
 import json
+import os
 import sys
 import time
 
-sys.path.append("..")
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # jalan dari folder mana pun
 import classify_fire
 
 JENDELA_S = 30.0

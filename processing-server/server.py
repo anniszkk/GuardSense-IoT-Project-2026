@@ -63,6 +63,7 @@ SAVE_CLIPS_DIR = os.getenv("SAVE_CLIPS_DIR")
 ALERT_COOLDOWN_S = 10.0
 ALARM_COOLDOWN_S = 30.0  # alarm suara terus-menerus, jadi cooldown lebih panjang
 _last_alert_at: dict[tuple[str, str], float] = {}  # (device_id, event_type) -> epoch
+FIRE_CONFIRM_WINDOW_S = 10.0  # lonjakan gas-suhu kedua dalam jendela ini -> ALERT, kalau tidak -> VERIFY
 
 AUDIO_KEEP_S = 60.0    # keep RMS samples per HP for this many seconds
 PEER_MATCH_S = 3.0     # consider another HP's sample if within +-3s
@@ -335,7 +336,7 @@ def on_env_message(client, userdata, msg):
     now = _now()
     with _state_lock:
         last = _fire_candidate.get(device_id)
-        if last and (now - last) <= 10.0:
+        if last and (now - last) <= FIRE_CONFIRM_WINDOW_S:
             level = "ALERT"
             _fire_candidate.pop(device_id, None)
         else:
@@ -479,7 +480,7 @@ def create_flask_app():
     @app.route("/api/telemetry")
     def api_telemetry():
         with _state_lock:
-            items = list(telemetry_history)[-100:]
+            items = list(telemetry_history)
         return jsonify(items)
 
     return app
