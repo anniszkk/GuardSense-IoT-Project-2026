@@ -154,7 +154,7 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 
 - *Bagian A sudah dibuat dengan cakupan lebih sempit daripada rancangan.* Penilaian dilakukan pada **klip yang sama**: bila rata-rata skor Television, Speech, atau Music selama klip di atas 0,3 dan klip itu juga lolos klasifikasi kaca, event dikirim sebagai jenis `glass_break_needs_verification` (bukan `glass_break`) ke topic alerts. Belum dikerjakan: konteks klip sebelum dan sesudahnya, serta label "perlu verifikasi" di dashboard (dashboard belum dibuat).
 - *Uji simulasi (offline):* tiga sampel kaca ditempel di atas bicara dan musik dengan dua tingkat volume latar (12 campuran). Kaca polos: skor media maksimal 0,01-0,05, tidak ditandai. Pada seluruh campuran, skor media 0,34-0,94 sehingga ditandai TV. Pada 7 dari 12 campuran skor kaca tetap di atas ambang (0,43-0,90) sehingga menghasilkan "perlu verifikasi"; pada 5 campuran lainnya skor kaca jatuh ke 0,00-0,11 karena latar menutupi kaca, sehingga tidak ada alert sama sekali. Ini aman terhadap TV, tetapi artinya kaca asli yang pecah saat TV keras bisa terlewat. Belum diuji dengan pemutaran lewat mikrofon HP.
-- *Bagian B belum diimplementasikan* (butuh HP B aktif dan penyimpanan RMS terakhir per HP di server).
+- *Bagian B sudah dibuat di server, tetapi ambangnya belum dikalibrasi.* Server menyimpan RMS klip tiap HP (dengan jam server saat klip tiba, karena jam dua HP bisa selisih beberapa detik). Saat satu HP mendeteksi kaca, RMS-nya dibandingkan dengan klip HP lain yang tiba dalam 3 detik; rasio di bawah 1,5 dianggap "setara" (kemungkinan sumber tersebar seperti TV) dan event diberi jenis `glass_break_needs_verification` dengan alasan `amplitude_equal`. Nilai 1,5 hanya tebakan awal dan harus ditentukan dari uji dua HP sungguhan (skenario 5). HP lain yang tidak mengirim klip di sekitar kejadian dianggap hening (rasio timpang); HP lain yang tidak terlihat lebih dari 30 detik dianggap mati dan bagian B tidak menilai. Kegagalan ambang ini aman: kaca asli hanya diberi label "perlu verifikasi", alert tidak dibuang. Logika sudah lolos 7 skenario uji simulasi; belum diuji dengan dua HP.
 
 **Keputusan akhir (dengan liveness check):** Event ditandai ALERT penuh hanya jika lolos klasifikasi Glass shatter DAN tidak terindikasi berasal dari TV/media berdasarkan salah satu atau kedua validasi di atas. Jika terindikasi dari TV namun tetap ingin dicatat, event bisa ditampilkan di dashboard dengan label tingkat keyakinan lebih rendah, bukan dihapus begitu saja.
 
@@ -213,7 +213,7 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Estimasi lokasi sumber asap hanya berbasis perbandingan nilai antarnode (node dengan kenaikan tercepat/tertinggi), bukan triangulasi presisi, sehingga akurasi lokasi bersifat kasar (per-ruangan, bukan per-titik).
 
-- Liveness check (pembeda suara TV/sinetron vs event nyata) menggunakan proxy sederhana (konteks suara sekitar via YAMNet dan rasio amplitudo dua mikrofon), bukan direction-of-arrival presisi seperti pada sistem komersial yang memakai microphone array tersinkronisasi. Skenario yang tetap berpotensi lolos sebagai false alarm: adegan kaca pecah di TV yang diputar tanpa dialog/musik bersamaan, atau posisi TV yang kebetulan sama jaraknya dari kedua HP sehingga rasio amplitudo terlihat timpang seperti event nyata.
+- Liveness check (pembeda suara TV/sinetron vs event nyata) menggunakan proxy sederhana (konteks suara sekitar via YAMNet dan rasio amplitudo dua mikrofon), bukan direction-of-arrival presisi seperti pada sistem komersial yang memakai microphone array tersinkronisasi. Skenario yang tetap berpotensi lolos sebagai false alarm: adegan kaca pecah di TV yang diputar tanpa dialog/musik bersamaan, atau TV yang jaraknya berbeda dari kedua HP (misalnya lebih dekat ke HP A) sehingga rasio amplitudo terlihat timpang seperti event nyata: TV juga sumber titik, jadi asumsi "TV menyebar merata" hanya berlaku bila kedua HP kira-kira sama jauhnya dari TV. Perlindungan utama untuk kasus ini adalah bagian A (konteks suara) dan penempatan HP; kalibrasi "tanda tangan" rasio TV dicatat sebagai pengembangan lanjutan.
 
 - Skor YAMNet pada rekaman mikrofon HP bervariasi antar-klip untuk bunyi yang sama (0,00-0,95), bergantung pada posisi kejadian di dalam klip, volume, dan jarak. Kejadian yang pelan (hanya sedikit di atas bising latar) kadang terdeteksi dan kadang tidak. Kejadian berdurasi 1 detik atau kurang dijamin utuh di setidaknya satu klip; yang lebih panjang bisa terbelah di dua klip.
 
@@ -224,6 +224,8 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 - Latar media yang keras (musik, TV) bisa menutupi suara kaca sampai skornya mendekati nol, sehingga kaca asli saat TV keras bisa terlewat.
 
 - Audio rumah dikirim lewat broker publik (lihat Bab 6.2). HP harus terus menyala dan dicolok ke charger, Termux perlu dikecualikan dari optimasi baterai, dan mikrofon tidak bisa dipakai bersamaan dengan aplikasi lain. Ada celah rekam saat pergantian file (tiap 30 menit).
+
+- Liveness bagian B hanya memakai klip HP lain yang sudah tiba saat keputusan diambil; klip HP lain yang tiba hingga sekitar 2 detik sesudahnya belum ikut dinilai. Efeknya bias ke "timpang" (kaca asli tidak diberi label keliru), tetapi kasus TV bisa lolos sebagai alert penuh. Selain itu perbedaan gain mikrofon antar-HP bisa memengaruhi rasio.
 
 - Label "perlu verifikasi" belum tampil di dashboard karena dashboard belum dibuat.
 
@@ -254,7 +256,7 @@ Metode: rekaman mikrofon HP asli (Termux, 16 kHz) untuk sampel yang diputar lewa
 | 2 | Hewan menyenggol benda kaca | Belum | - |
 | 3 | Suara keras lain (pintu dibanting, buku jatuh) | Sebagian | Pintu dibanting (dua jenis), musik, bicara, tawa, bising ruangan, suara memasak, dan TV static: rekaman offline skor kaca maksimal 0,18; uji live sekitar 62 klip (122 detik) tidak ada yang ditandai kaca, skor maksimal 0,08. Buku jatuh, kunci, dan koin belum diuji |
 | 4 | Kaca di TV dengan dialog/musik | Sebagian | Hanya simulasi offline (Bab 5.2.1.1); belum lewat mikrofon HP |
-| 5 | Rasio amplitudo dua HP | Belum | Butuh HP B dan liveness bagian B |
+| 5 | Rasio amplitudo dua HP | Logika selesai, kalibrasi belum | Server sudah membandingkan RMS dua HP (7 skenario simulasi lolos); ambang rasio 1,5 belum dikalibrasi dengan dua HP sungguhan |
 | 10 | Latensi notifikasi | Belum | - |
 
 Parameter yang berubah selama kalibrasi:
@@ -287,7 +289,7 @@ Dibagi berdasarkan jalur kerja end-to-end (bukan per jenis aktivitas), supaya se
 | 6      | Kalibrasi ambang batas pakai sampel suara nyata (kaca pecah, suara keras lain, cuplikan TV)     | Nilai ambang batas final + catatan hasil kalibrasi                      |
 | 7      | Menulis Bab 4.1, 5.1 (bagian audio), 5.2.1, 5.2.1.1 di laporan akhir                            | Draf bagian laporan terkait audio                                       |
 
-**Status (28 Oktober 2026):** Tugas 1 selesai. Tugas 2 selesai (gerbang diturunkan menjadi 0,005; lihat Bab 5.1). Tugas 3 selesai sebagai cadangan. Tugas 4 selesai dan menjadi jalur utama. Tugas 5 sebagian (bagian A selesai, bagian B belum). Tugas 6 sebagian (kalibrasi dengan rekaman HP, belum dengan kaca sungguhan). Tugas 7 sebagian (Bab 4.1, 5.1, 5.2.1, 5.2.1.1 diperbarui di dokumen ini).
+**Status (28 Oktober 2026):** Tugas 1 selesai. Tugas 2 selesai (gerbang diturunkan menjadi 0,005; lihat Bab 5.1). Tugas 3 selesai sebagai cadangan. Tugas 4 selesai dan menjadi jalur utama. Tugas 5 sebagian (bagian A selesai; bagian B logikanya selesai tetapi ambangnya belum dikalibrasi dengan dua HP). Tugas 6 sebagian (kalibrasi dengan rekaman HP, belum dengan kaca sungguhan). Tugas 7 sebagian (Bab 4.1, 5.1, 5.2.1, 5.2.1.1 diperbarui di dokumen ini).
 
 ## 10.2 Binar — Jalur Gas & Suhu (Deteksi Kebakaran, via Wokwi)
 

@@ -201,10 +201,25 @@ def liveness_check_context(media_scores: dict) -> bool:
     return any(score > MEDIA_CONTEXT_THRESHOLD for score in media_scores.values())
 
 
+# Bagian B liveness (Bab 5.2.1.1): rasio RMS antar dua HP. TV menyebar rata ke ruangan, jadi RMS
+# di kedua HP hampir sama; kaca pecah itu sumber titik, jadi HP yang dekat jauh lebih keras.
+# BELUM DIKALIBRASI dengan dua HP sungguhan -- 1.5 hanya tebakan awal (override: env LIVENESS_RATIO).
+# Kalau salah, kegagalannya aman: kaca asli hanya diberi label "perlu verifikasi", tidak dibuang.
+import os as _os
+
+AMPLITUDE_RATIO_EQUAL_MAX = float(_os.getenv("LIVENESS_RATIO", "1.5"))
+RATIO_RMS_FLOOR = 0.005  # sama dengan gerbang RMS edge; mencegah pembagian dengan nilai ~0
+
+
+def amplitude_ratio(rms_a: float, rms_b: float) -> float:
+    """Rasio >= 1: RMS yang lebih besar dibagi yang lebih kecil (keduanya diberi lantai RATIO_RMS_FLOOR)."""
+    hi = max(rms_a, rms_b, RATIO_RMS_FLOOR)
+    lo = max(min(rms_a, rms_b), RATIO_RMS_FLOOR)
+    return hi / lo
+
+
 def liveness_check_amplitude_ratio(rms_hp_a: float, rms_hp_b: float) -> bool:
-    """Bagian B liveness check (Bab 5.2.1.1): True kalau rasio amplitudo antar
-    dua HP relatif SETARA (indikasi sumber tersebar seperti TV), False kalau
-    timpang (indikasi event lokal/asli).
-    TODO: implementasikan + tentukan ambang rasio hasil kalibrasi (butuh 2 HP).
-    """
-    raise NotImplementedError("TODO: implementasikan liveness_check_amplitude_ratio")
+    """Bagian B liveness check (Bab 5.2.1.1): True kalau rasio amplitudo antar dua HP
+    relatif SETARA (indikasi sumber tersebar seperti TV), False kalau timpang
+    (indikasi event lokal/asli)."""
+    return amplitude_ratio(rms_hp_a, rms_hp_b) < AMPLITUDE_RATIO_EQUAL_MAX

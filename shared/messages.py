@@ -54,6 +54,7 @@ class AlertMessage:
     confidence: float        # 0.0 - 1.0
     location_hint: str | None = None   # misal "dapur", "kamar"
     source: str | None = None          # device_id yang memicu
+    reason: str | None = None          # kenapa "needs_verification": "media_context" | "amplitude_equal" (atau keduanya, dipisah koma)
     timestamp: float = None
 
     def __post_init__(self):

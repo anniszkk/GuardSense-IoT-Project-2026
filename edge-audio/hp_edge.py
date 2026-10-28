@@ -7,8 +7,7 @@ Dua mode (env EDGE_MODE, default "continuous"):
   window     : mode lama, rekam 2 detik -> stop -> ulang (ada jeda ~1.3-2.5 detik
                tiap siklus). Cadangan kalau opus/rekam-terus bermasalah di HP.
 
-TODO (Annis):
-  1. Ganti DEVICE_ID jadi "hpA" di HP pertama, "hpB" di HP kedua.
+DEVICE_ID: "hpA" di HP pertama, "hpB" di HP kedua (env var atau .env, lihat di bawah).
 
 Sebelum dijalankan di Termux, install dulu:
     pkg install termux-api ffmpeg
@@ -35,8 +34,10 @@ from shared.audio_features import high_band_ratio
 from prefilter import compute_rms, compute_dominant_frequency, should_send
 import continuous_capture
 
-# TODO: ganti sesuai HP ("hpA" di satu HP, "hpB" di HP satunya)
-DEVICE_ID = "hpA"
+# "hpA" di HP pertama, "hpB" di HP kedua. Atur lewat env var atau .env di tiap HP:
+#     DEVICE_ID=hpB python hp_edge.py        (atau tulis DEVICE_ID=hpB di .env)
+# Default hpA. Nilainya jadi bagian topic MQTT (edge/<DEVICE_ID>/audio).
+DEVICE_ID = os.getenv("DEVICE_ID", "hpA")
 
 # HARUS integer -- termux-microphone-record -l dipakai sebagai angka bulat
 # di shell script-nya, kalau kasih desimal (misal 1.5) bakal error "arithmetic
