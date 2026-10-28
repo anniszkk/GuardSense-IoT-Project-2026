@@ -86,15 +86,12 @@ def record_audio_window():
         if os.path.exists(p):
             os.remove(p)  # hapus sisa rekaman sebelumnya, supaya tidak salah baca file lama
 
-    # Stop paksa kalau ada rekaman lama yang masih nyangkut (misal dari error
-    # sebelumnya yang bikin durasi jadi unlimited). PENTING: stop/quit yang
-    # benar itu "-q", BUKAN "-d" -- "-d" artinya "mulai rekaman pakai setting
-    # default", bukan stop (ini bug yang sempat ada di versi sebelumnya).
-    # Retry beberapa kali karena stop-nya butuh waktu buat benar-benar
-    # dieksekusi oleh background service (0.3s saja kadang belum cukup).
+    # Langsung start (TANPA "-q" dulu): tiap panggilan termux-microphone-record makan
+    # ~1 detik (Termux:API menyalakan proses baru), dan rekaman siklus sebelumnya sudah
+    # di-stop di akhir record_audio_window(). "-q" cuma dipanggil kalau start menolak
+    # karena masih ada rekaman nyangkut (misal dari error/Ctrl+C sebelumnya).
+    # PENTING: stop/quit yang benar itu "-q", BUKAN "-d" ("-d" = mulai rekaman default).
     for attempt in range(5):
-        subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
-        time.sleep(0.5)
         start = subprocess.run(
             # -r/-b/-c WAJIB eksplisit: tanpa -r, termux merekam di 8000 Hz (AAC 12 kbps),
             # semua suara > 4 kHz hilang padahal ciri kaca pecah ada di sana (rasio
@@ -105,7 +102,9 @@ def record_audio_window():
         )
         if "already in progress" not in start.stdout.lower() and "already in progress" not in start.stderr.lower():
             break
-        print(f"[{DEVICE_ID}] Masih ada rekaman lama nyangkut, coba stop lagi... ({attempt + 1}/5)")
+        print(f"[{DEVICE_ID}] Masih ada rekaman lama nyangkut, stop dulu... ({attempt + 1}/5)")
+        subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
+        time.sleep(0.5)
     else:
         raise RuntimeError(
             "Gagal mulai rekaman baru setelah beberapa percobaan -- ada rekaman lama "
@@ -116,35 +115,39 @@ def record_audio_window():
     # langsung return -- rekaman baru benar-benar selesai setelah WINDOW_SECONDS.
     time.sleep(WINDOW_SECONDS)
 
-    # Stop EKSPLISIT di sini pakai "-q" (bukan "-d"!) -- time-limit (-l) saja
-    # ternyata tidak selalu bikin file .m4a di-finalize dengan benar (moov
-    # atom/metadata akhir file kadang belum sempat ditulis), jadi dipaksa
-    # quit/stop manual dulu supaya filenya valid.
-    subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
-    time.sleep(0.5)  # beri waktu file selesai ditulis ke disk
+    # Beri sedikit waktu supaya "-l" menghentikan rekaman & menulis metadata akhir m4a
+    # (moov atom). "-q" eksplisit TIDAK dipanggil di jalur normal karena makan ~1 detik;
+    # kalau file ternyata belum valid (ffmpeg gagal), baru di-stop paksa lalu dicoba lagi.
+    time.sleep(0.4)
     t_stopped = time.time()
 
-    if not os.path.exists(_RECORD_PATH):
-        raise RuntimeError(
-            "File rekaman tidak ditemukan. Pastikan aplikasi Termux:API ter-install "
-            "(dari F-Droid, bukan cuma `pkg install termux-api`) dan izin mikrofon "
-            "sudah diberikan ke aplikasi itu."
+    def _convert():
+        if not os.path.exists(_RECORD_PATH):
+            return False
+        # PENTING: filter "pan=mono|c0=c0" (ambil channel kiri), BUKAN "-ac 1" biasa --
+        # "-ac 1" merata-ratakan kedua channel, dan kalau stereo-nya tidak sefase (kejadian
+        # nyata di HP) rata-rata itu bisa saling membatalkan sinyal (phase cancellation).
+        # 16 kHz = syarat input YAMNet, klipnya jadi kecil (~64 KB / 2 detik).
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", _RECORD_PATH,
+             "-ar", "16000", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
+            capture_output=True,
         )
+        return r.returncode == 0 and os.path.exists(_WAV_PATH)
 
-    # PENTING: pakai filter "pan=mono|c0=c0" (ambil channel kiri aja), BUKAN
-    # "-ac 1" biasa -- "-ac 1" merata-ratakan kedua channel, dan kalau
-    # rekaman stereo-nya tidak sefase (kejadian nyata di HP, lihat debugging
-    # bareng user), rata-rata itu bisa saling membatalkan sinyalnya (phase
-    # cancellation) sampai nyaris hilang. Ambil 1 channel saja lebih aman.
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", _RECORD_PATH,
-         "-ar", "16000", "-af", "pan=mono|c0=c0", "-sample_fmt", "s16", _WAV_PATH],
-        check=True,
-    )  # 16 kHz = syarat input YAMNet, dan klipnya jadi kecil (~64 KB / 2 detik)
+    if not _convert():
+        subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
+        time.sleep(0.5)
+        if not _convert():
+            raise RuntimeError(
+                "File rekaman tidak ditemukan/tidak valid. Pastikan aplikasi Termux:API ter-install "
+                "(dari F-Droid, bukan cuma `pkg install termux-api`) dan izin mikrofon "
+                "sudah diberikan ke aplikasi itu."
+            )
     t_converted = time.time()
 
     result = _load_wav_mono_float(_WAV_PATH)
-    _last_timing = (f"mulai={t_started - t0:.1f}s rekam+stop={t_stopped - t_started:.1f}s "
+    _last_timing = (f"mulai={t_started - t0:.1f}s rekam={t_stopped - t_started:.1f}s "
                     f"ffmpeg={t_converted - t_stopped:.1f}s")
     return result
 
