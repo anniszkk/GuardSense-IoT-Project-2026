@@ -2,19 +2,1133 @@
 <html lang="id">
 <head>
   <meta charset="utf-8" />
-  <title>GuardSense Dashboard</title>
-  <!-- TODO (Lila): styling, tampilkan status device, riwayat event, grafik -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GuardSense — Dashboard Monitoring Keamanan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-main: #0b0f19;
+      --bg-card: #131b2e;
+      --bg-card-hover: #19243d;
+      --border: #233252;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-purple: #c084fc;
+      --status-normal: #10b981;
+      --status-normal-bg: rgba(16, 185, 129, 0.15);
+      --status-verify: #f59e0b;
+      --status-verify-bg: rgba(245, 158, 11, 0.15);
+      --status-alert: #ef4444;
+      --status-alert-bg: rgba(239, 68, 68, 0.18);
+      --status-offline: #64748b;
+      --radius: 12px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 24px 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35);
+    }
+
+    .brand-title h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-title p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .connection-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--status-normal);
+      box-shadow: 0 0 8px var(--status-normal);
+      transition: background-color 0.3s;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: var(--bg-card-hover);
+      border-color: #3b82f6;
+    }
+
+    .btn-active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    /* Overall Status Banner */
+    .overall-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .overall-card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 6px;
+      background-color: var(--status-normal);
+      transition: background-color 0.3s ease;
+    }
+
+    .overall-card.status-NORMAL::before { background-color: var(--status-normal); }
+    .overall-card.status-NORMAL { border-color: rgba(16, 185, 129, 0.3); }
+
+    .overall-card.status-VERIFY::before { background-color: var(--status-verify); }
+    .overall-card.status-VERIFY {
+      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(245, 158, 11, 0.4);
+    }
+
+    .overall-card.status-ALERT::before { background-color: var(--status-alert); }
+    .overall-card.status-ALERT {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.5);
+      animation: pulseAlert 1.5s infinite;
+    }
+
+    @keyframes pulseAlert {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 24px rgba(239, 68, 68, 0.35); }
+    }
+
+    .overall-info {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .overall-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+    }
+
+    .overall-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .overall-desc {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Section Titles */
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title span {
+      color: var(--accent-blue);
+    }
+
+    /* Device Grid */
+    .devices-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .device-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .device-card:hover {
+      border-color: #3b82f6;
+      transform: translateY(-2px);
+    }
+
+    .device-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .device-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .device-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .device-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .device-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .device-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-online {
+      background: var(--status-normal-bg);
+      color: var(--status-normal);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .badge-offline {
+      background: rgba(100, 116, 139, 0.2);
+      color: var(--status-offline);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+    }
+
+    .metrics-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .metric-label {
+      color: var(--text-muted);
+    }
+
+    .metric-val {
+      font-family: var(--font-mono);
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .meter-bar {
+      height: 5px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent-blue);
+      border-radius: 9999px;
+      transition: width 0.3s ease;
+    }
+
+    /* Charts Section */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .chart-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .chart-legend {
+      display: flex;
+      gap: 12px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      height: 180px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* History Table */
+    .history-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 500;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(35, 50, 82, 0.5);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .event-badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+    }
+
+    .event-badge.ALERT {
+      background: var(--status-alert-bg);
+      color: var(--status-alert);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .event-badge.VERIFY {
+      background: var(--status-verify-bg);
+      color: var(--status-verify);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .event-badge.NORMAL {
+      background: var(--status-normal-bg);
+      color: var(--status-normal);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .timestamp-cell {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 36px 12px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 36px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 768px) {
+      body { padding: 16px 12px; }
+      header { flex-direction: column; align-items: flex-start; }
+      .overall-card { flex-direction: column; align-items: flex-start; }
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
-  <h1>GuardSense Dashboard</h1>
-  <p>TODO: tampilkan status real-time, riwayat event, dan grafik amplitudo/gas/suhu. Lihat docs/GuardSense_Dokumen_Proyek.docx Bab 7.</p>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">🛡️</div>
+        <div class="brand-title">
+          <h1>GuardSense Dashboard</h1>
+          <p>Sistem Deteksi Pecahan Kaca & Kebakaran Berbasis Multisensor</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="connection-badge">
+          <span class="status-dot" id="netDot"></span>
+          <span id="netStatus">Terhubung ke Server</span>
+        </div>
+        <button class="btn" id="soundBtn" onclick="toggleSound()">
+          <span id="soundIcon">🔔</span> Alarm Suara: <span id="soundState">Mati</span>
+        </button>
+        <button class="btn" onclick="fetchData()">
+          🔄 Refresh
+        </button>
+      </div>
+    </header>
 
-  <section id="status">
-    <!-- TODO: status tiap edge device -->
-  </section>
+    <!-- Overall System Status Card -->
+    <div class="overall-card status-NORMAL" id="overallCard">
+      <div class="overall-info">
+        <div class="overall-icon" id="overallIcon">🟢</div>
+        <div>
+          <div class="overall-title" id="overallTitle">STATUS SISTEM: AMAN (NORMAL)</div>
+          <div class="overall-desc" id="overallDesc">Seluruh sensor bekerja dalam rentang aman. Tidak ada aktivitas mencurigakan.</div>
+        </div>
+      </div>
+      <div style="text-align: right; font-size: 0.8rem; color: var(--text-muted);">
+        Update: <span id="lastUpdated" style="font-family: var(--font-mono); color: var(--text-main);">-</span>
+      </div>
+    </div>
 
-  <section id="history">
-    <!-- TODO: riwayat event -->
-  </section>
+    <!-- Edge Devices Status Section -->
+    <div class="section-header">
+      <div class="section-title">
+        <span>📡</span> Status Edge Devices
+      </div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Auto-refresh tiap 1.5 detik</div>
+    </div>
+
+    <div class="devices-grid">
+      <!-- HP A -->
+      <div class="device-card" id="card-hpA">
+        <div class="device-header">
+          <div class="device-title-wrap">
+            <div class="device-icon">📱</div>
+            <div>
+              <div class="device-name">HP A (Mikrofon)</div>
+              <div class="device-sub">Ruang Tamu / Jendela</div>
+            </div>
+          </div>
+          <span class="device-badge badge-offline" id="badge-hpA">OFFLINE</span>
+        </div>
+        <div class="metrics-list">
+          <div>
+            <div class="metric-row">
+              <span class="metric-label">RMS Amplitudo</span>
+              <span class="metric-val" id="val-hpA-rms">0.000</span>
+            </div>
+            <div class="meter-bar">
+              <div class="meter-fill" id="bar-hpA-rms"></div>
+            </div>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Frekuensi Dominan</span>
+            <span class="metric-val" id="val-hpA-freq">0 Hz</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Terakhir Dilihat</span>
+            <span class="metric-val" id="val-hpA-seen">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- HP B -->
+      <div class="device-card" id="card-hpB">
+        <div class="device-header">
+          <div class="device-title-wrap">
+            <div class="device-icon">📱</div>
+            <div>
+              <div class="device-name">HP B (Mikrofon)</div>
+              <div class="device-sub">Kamar / Liveness B</div>
+            </div>
+          </div>
+          <span class="device-badge badge-offline" id="badge-hpB">OFFLINE</span>
+        </div>
+        <div class="metrics-list">
+          <div>
+            <div class="metric-row">
+              <span class="metric-label">RMS Amplitudo</span>
+              <span class="metric-val" id="val-hpB-rms">0.000</span>
+            </div>
+            <div class="meter-bar">
+              <div class="meter-fill" id="bar-hpB-rms"></div>
+            </div>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Frekuensi Dominan</span>
+            <span class="metric-val" id="val-hpB-freq">0 Hz</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Terakhir Dilihat</span>
+            <span class="metric-val" id="val-hpB-seen">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ESP32 Dapur -->
+      <div class="device-card" id="card-esp32_dapur">
+        <div class="device-header">
+          <div class="device-title-wrap">
+            <div class="device-icon">🔥</div>
+            <div>
+              <div class="device-name">ESP32 Dapur</div>
+              <div class="device-sub">MQ-2 Gas + DHT22 Suhu</div>
+            </div>
+          </div>
+          <span class="device-badge badge-offline" id="badge-esp32_dapur">OFFLINE</span>
+        </div>
+        <div class="metrics-list">
+          <div class="metric-row">
+            <span class="metric-label">Gas Est (PPM ADC)</span>
+            <span class="metric-val" id="val-dapur-gas">0.0</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Laju Gas (RoR)</span>
+            <span class="metric-val" id="val-dapur-gas-rate">0.0 /s</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Suhu Ruangan</span>
+            <span class="metric-val" id="val-dapur-temp">0.0 °C</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Laju Suhu (RoR)</span>
+            <span class="metric-val" id="val-dapur-temp-rate">0.0 °C/s</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ESP32 Kamar -->
+      <div class="device-card" id="card-esp32_kamar">
+        <div class="device-header">
+          <div class="device-title-wrap">
+            <div class="device-icon">🛏️</div>
+            <div>
+              <div class="device-name">ESP32 Kamar</div>
+              <div class="device-sub">MQ-2 Gas + DHT22 Suhu</div>
+            </div>
+          </div>
+          <span class="device-badge badge-offline" id="badge-esp32_kamar">OFFLINE</span>
+        </div>
+        <div class="metrics-list">
+          <div class="metric-row">
+            <span class="metric-label">Gas Est (PPM ADC)</span>
+            <span class="metric-val" id="val-kamar-gas">0.0</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Laju Gas (RoR)</span>
+            <span class="metric-val" id="val-kamar-gas-rate">0.0 /s</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Suhu Ruangan</span>
+            <span class="metric-val" id="val-kamar-temp">0.0 °C</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Laju Suhu (RoR)</span>
+            <span class="metric-val" id="val-kamar-temp-rate">0.0 °C/s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="section-header">
+      <div class="section-title">
+        <span>📈</span> Grafik Telemetri Real-Time
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <!-- Audio Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Amplitudo Audio (RMS)</div>
+          <div class="chart-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#38bdf8;"></span> HP A</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#c084fc;"></span> HP B</span>
+          </div>
+        </div>
+        <div class="canvas-container">
+          <canvas id="audioChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Gas Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Laju Kenaikan Gas (RoR)</div>
+          <div class="chart-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span> Dapur</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#10b981;"></span> Kamar</span>
+          </div>
+        </div>
+        <div class="canvas-container">
+          <canvas id="gasChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Temperature Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Suhu Ruangan (°C)</div>
+          <div class="chart-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> Dapur</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#06b6d4;"></span> Kamar</span>
+          </div>
+        </div>
+        <div class="canvas-container">
+          <canvas id="tempChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Event History Section -->
+    <div class="section-header">
+      <div class="section-title">
+        <span>📜</span> Riwayat Deteksi & Peringatan
+      </div>
+    </div>
+
+    <div class="history-card">
+      <table id="eventsTable">
+        <thead>
+          <tr>
+            <th>Waktu</th>
+            <th>Level</th>
+            <th>Jenis Kejadian</th>
+            <th>Sumber</th>
+            <th>Lokasi Terduga</th>
+            <th>Akurasi</th>
+            <th>Keterangan / Alasan</th>
+          </tr>
+        </thead>
+        <tbody id="eventsBody">
+          <tr>
+            <td colspan="7" class="empty-state">Memuat riwayat event...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      GuardSense &copy; 2026 — Tim Pengembang: Annis (Edge Audio), Binar (ESP32 Firmware), Lila (Integrasi & Dashboard)
+    </footer>
+  </div>
+
+  <script>
+    // State
+    let soundEnabled = false;
+    let audioCtx = null;
+    let lastAlertLevel = "NORMAL";
+
+    // Toggle sound
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const soundBtn = document.getElementById("soundBtn");
+      const soundState = document.getElementById("soundState");
+      if (soundEnabled) {
+        soundBtn.classList.add("btn-active");
+        soundState.innerText = "Aktif";
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        playBeep(600, 0.1);
+      } else {
+        soundBtn.classList.remove("btn-active");
+        soundState.innerText = "Mati";
+      }
+    }
+
+    function playBeep(freq, duration) {
+      if (!soundEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {
+        console.warn("AudioContext error:", e);
+      }
+    }
+
+    // Canvas line chart helper (pure zero-dependency HTML5 Canvas)
+    class MiniLineChart {
+      constructor(canvasId, seriesConfigs) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.seriesConfigs = seriesConfigs; // array of { key: str, filterKey: str, filterVal: str, color: str }
+        this.history = [];
+        this.maxPoints = 25;
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+      }
+
+      resize() {
+        const rect = this.canvas.parentElement.getBoundingClientRect();
+        this.canvas.width = rect.width * (window.devicePixelRatio || 1);
+        this.canvas.height = rect.height * (window.devicePixelRatio || 1);
+        this.draw();
+      }
+
+      addDataPoint(telemetryList) {
+        this.history = telemetryList.slice(-this.maxPoints);
+        this.draw();
+      }
+
+      draw() {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, w, h);
+
+        const padX = 35 * (window.devicePixelRatio || 1);
+        const padY = 20 * (window.devicePixelRatio || 1);
+        const graphW = w - padX - 10;
+        const graphH = h - padY * 2;
+
+        // Draw grid lines
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 3; i++) {
+          const y = padY + (graphH / 3) * i;
+          ctx.beginPath();
+          ctx.moveTo(padX, y);
+          ctx.lineTo(w, y);
+          ctx.stroke();
+        }
+
+        if (!this.history.length) return;
+
+        // Find max value across all series
+        let maxVal = 0.05;
+        this.seriesConfigs.forEach(s => {
+          this.history.forEach(item => {
+            if (!s.filterKey || item[s.filterKey] === s.filterVal) {
+              const val = parseFloat(item[s.key] || 0);
+              if (val > maxVal) maxVal = val;
+            }
+          });
+        });
+        maxVal = maxVal * 1.2; // ceiling headroom
+
+        // Draw axis labels
+        ctx.fillStyle = "#64748b";
+        ctx.font = `${10 * (window.devicePixelRatio || 1)}px JetBrains Mono, monospace`;
+        ctx.fillText(maxVal.toFixed(2), 2, padY + 10);
+        ctx.fillText("0.00", 2, padY + graphH);
+
+        // Draw each series line
+        this.seriesConfigs.forEach(s => {
+          const points = [];
+          this.history.forEach((item, idx) => {
+            if (!s.filterKey || item[s.filterKey] === s.filterVal) {
+              const val = parseFloat(item[s.key] || 0);
+              const x = padX + (idx / Math.max(1, this.history.length - 1)) * graphW;
+              const y = padY + graphH - (val / maxVal) * graphH;
+              points.push({ x, y, val });
+            }
+          });
+
+          if (points.length < 2) return;
+
+          ctx.strokeStyle = s.color;
+          ctx.lineWidth = 2 * (window.devicePixelRatio || 1);
+          ctx.beginPath();
+          points.forEach((pt, i) => {
+            if (i === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          });
+          ctx.stroke();
+
+          // Draw small circles on points
+          ctx.fillStyle = s.color;
+          points.forEach(pt => {
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 3 * (window.devicePixelRatio || 1), 0, Math.PI * 2);
+            ctx.fill();
+          });
+        });
+      }
+    }
+
+    // Initialize Charts
+    const audioChart = new MiniLineChart('audioChart', [
+      { key: 'rms_amplitude', filterKey: 'device_id', filterVal: 'hpA', color: '#38bdf8' },
+      { key: 'rms_amplitude', filterKey: 'device_id', filterVal: 'hpB', color: '#c084fc' }
+    ]);
+
+    const gasChart = new MiniLineChart('gasChart', [
+      { key: 'gas_rate_of_rise', filterKey: 'device_id', filterVal: 'esp32_dapur', color: '#f59e0b' },
+      { key: 'gas_rate_of_rise', filterKey: 'device_id', filterVal: 'esp32_kamar', color: '#10b981' }
+    ]);
+
+    const tempChart = new MiniLineChart('tempChart', [
+      { key: 'temperature_c', filterKey: 'device_id', filterVal: 'esp32_dapur', color: '#ef4444' },
+      { key: 'temperature_c', filterKey: 'device_id', filterVal: 'esp32_kamar', color: '#06b6d4' }
+    ]);
+
+    // Data Fetching & UI Updates
+    async function fetchData() {
+      try {
+        const [stateRes, eventsRes, teleRes] = await Promise.all([
+          fetch('/api/state'),
+          fetch('/api/events'),
+          fetch('/api/telemetry')
+        ]);
+
+        if (!stateRes.ok || !eventsRes.ok) throw new Error("Gagal mengambil data dari server");
+
+        const stateData = await stateRes.json();
+        const eventsData = await eventsRes.json();
+        const teleData = teleRes.ok ? await teleRes.json() : [];
+
+        updateNetworkStatus(true);
+        updateOverallStatus(stateData.overall);
+        updateDevices(stateData.devices || {});
+        updateEvents(eventsData);
+        updateTelemetry(teleData);
+
+        document.getElementById('lastUpdated').innerText = new Date().toLocaleTimeString('id-ID');
+      } catch (err) {
+        console.error("Fetch error:", err);
+        updateNetworkStatus(false);
+      }
+    }
+
+    function updateNetworkStatus(online) {
+      const dot = document.getElementById('netDot');
+      const text = document.getElementById('netStatus');
+      if (online) {
+        dot.style.backgroundColor = "var(--status-normal)";
+        dot.style.boxShadow = "0 0 8px var(--status-normal)";
+        text.innerText = "Terhubung ke Server";
+      } else {
+        dot.style.backgroundColor = "var(--status-alert)";
+        dot.style.boxShadow = "0 0 8px var(--status-alert)";
+        text.innerText = "Terputus dari Server";
+      }
+    }
+
+    function updateOverallStatus(overall) {
+      const card = document.getElementById('overallCard');
+      const icon = document.getElementById('overallIcon');
+      const title = document.getElementById('overallTitle');
+      const desc = document.getElementById('overallDesc');
+
+      card.className = `overall-card status-${overall}`;
+
+      if (overall === "ALERT") {
+        icon.innerText = "🚨";
+        title.innerText = "PERINGATAN BAHAYA: ALERT AKTIF!";
+        desc.innerText = "Pecahan kaca atau anomali kebakaran/asap terverifikasi! Segera lakukan pengecekan.";
+        if (lastAlertLevel !== "ALERT") playBeep(880, 0.4);
+      } else if (overall === "VERIFY") {
+        icon.innerText = "⚠️";
+        title.innerText = "PERINGATAN: PERLU VERIFIKASI";
+        desc.innerText = "Bunyi terdeteksi memiliki konteks media TV / pola beep tunggal / kenaikan sensor belum stabil.";
+        if (lastAlertLevel !== "VERIFY" && lastAlertLevel !== "ALERT") playBeep(520, 0.2);
+      } else {
+        icon.innerText = "🟢";
+        title.innerText = "STATUS SISTEM: AMAN (NORMAL)";
+        desc.innerText = "Seluruh sensor bekerja dalam rentang aman. Tidak ada aktivitas mencurigakan.";
+      }
+      lastAlertLevel = overall;
+    }
+
+    function updateDevices(devices) {
+      // HP A
+      const hpA = devices["hpA"];
+      updateAudioCard("hpA", hpA);
+
+      // HP B
+      const hpB = devices["hpB"];
+      updateAudioCard("hpB", hpB);
+
+      // ESP32 Dapur
+      const dapur = devices["esp32_dapur"];
+      updateEnvCard("dapur", "esp32_dapur", dapur);
+
+      // ESP32 Kamar
+      const kamar = devices["esp32_kamar"];
+      updateEnvCard("kamar", "esp32_kamar", kamar);
+    }
+
+    function updateAudioCard(devId, devInfo) {
+      const badge = document.getElementById(`badge-${devId}`);
+      const valRms = document.getElementById(`val-${devId}-rms`);
+      const barRms = document.getElementById(`bar-${devId}-rms`);
+      const valFreq = document.getElementById(`val-${devId}-freq`);
+      const valSeen = document.getElementById(`val-${devId}-seen`);
+
+      if (devInfo && devInfo.data) {
+        const isOnline = devInfo.data.online;
+        badge.className = `device-badge ${isOnline ? 'badge-online' : 'badge-offline'}`;
+        badge.innerText = isOnline ? "ONLINE" : "OFFLINE";
+
+        const rms = parseFloat(devInfo.data.rms_amplitude || 0);
+        valRms.innerText = rms.toFixed(4);
+        barRms.style.width = Math.min(100, (rms / 0.1) * 100) + "%";
+
+        const freq = devInfo.data.dominant_freq_hz;
+        valFreq.innerText = freq ? `${Math.round(freq)} Hz` : "-";
+
+        if (devInfo.last_seen) {
+          const diffSec = Math.round(Date.now() / 1000 - devInfo.last_seen);
+          valSeen.innerText = diffSec < 2 ? "Baru saja" : `${diffSec} dtk lalu`;
+        }
+      } else {
+        badge.className = "device-badge badge-offline";
+        badge.innerText = "OFFLINE";
+      }
+    }
+
+    function updateEnvCard(prefix, devId, devInfo) {
+      const badge = document.getElementById(`badge-${devId}`);
+      const valGas = document.getElementById(`val-${prefix}-gas`);
+      const valGasRate = document.getElementById(`val-${prefix}-gas-rate`);
+      const valTemp = document.getElementById(`val-${prefix}-temp`);
+      const valTempRate = document.getElementById(`val-${prefix}-temp-rate`);
+
+      if (devInfo && devInfo.data) {
+        const isOnline = devInfo.data.online;
+        badge.className = `device-badge ${isOnline ? 'badge-online' : 'badge-offline'}`;
+        badge.innerText = isOnline ? "ONLINE" : "OFFLINE";
+
+        const gas = parseFloat(devInfo.data.gas_ppm_est || 0);
+        const gasRate = parseFloat(devInfo.data.gas_rate_of_rise || 0);
+        const temp = parseFloat(devInfo.data.temperature_c || 0);
+        const tempRate = parseFloat(devInfo.data.temp_rate_of_rise || 0);
+
+        valGas.innerText = gas.toFixed(1);
+        valGasRate.innerText = `${gasRate >= 0 ? '+' : ''}${gasRate.toFixed(2)} /s`;
+        if (gasRate >= 5.0) valGasRate.style.color = "var(--status-alert)";
+        else valGasRate.style.color = "var(--text-main)";
+
+        valTemp.innerText = `${temp.toFixed(1)} °C`;
+        valTempRate.innerText = `${tempRate >= 0 ? '+' : ''}${tempRate.toFixed(2)} °C/s`;
+        if (tempRate >= 0.5) valTempRate.style.color = "var(--status-alert)";
+        else valTempRate.style.color = "var(--text-main)";
+      } else {
+        badge.className = "device-badge badge-offline";
+        badge.innerText = "OFFLINE";
+      }
+    }
+
+    function updateEvents(events) {
+      const tbody = document.getElementById('eventsBody');
+      if (!events || events.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Belum ada event yang tercatat. Sistem dalam keadaan normal.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = events.slice(0, 15).map(ev => {
+        const level = ev.level || (ev.event_type && ev.event_type.includes("needs_verification") ? "VERIFY" : "ALERT");
+        const confPercent = Math.round((parseFloat(ev.confidence) || 0) * 100);
+
+        let eventLabel = ev.event_type;
+        if (ev.event_type === "glass_break") eventLabel = "💥 Pecahan Kaca";
+        else if (ev.event_type === "glass_break_needs_verification") eventLabel = "⚠️ Pecahan Kaca (Perlu Verifikasi)";
+        else if (ev.event_type === "fire_alarm") eventLabel = "🚨 Alarm Asap Suara";
+        else if (ev.event_type === "fire_alarm_needs_verification") eventLabel = "⚠️ Alarm Asap (Perlu Verifikasi)";
+        else if (ev.event_type === "fire_smoke") eventLabel = "🔥 Kebakaran / Asap Gas";
+        else if (ev.event_type === "fire_smoke_needs_verification") eventLabel = "⚠️ Indikasi Asap (Verifikasi)";
+
+        let reasonLabel = ev.reason || "-";
+        if (reasonLabel.includes("media_context")) reasonLabel = "Konteks TV/Media (Liveness A)";
+        if (reasonLabel.includes("amplitude_equal")) reasonLabel = "Amplitudo Setara (Liveness B)";
+        if (reasonLabel.includes("beep_pattern")) reasonLabel = "Deteksi Pola Beep";
+        if (reasonLabel.includes("gas_temp_rate_of_rise")) reasonLabel = "Laju Gas & Suhu Melewati Ambang";
+
+        return `
+          <tr>
+            <td class="timestamp-cell">${ev.time_str || ev.timestamp || '-'}</td>
+            <td><span class="event-badge ${level}">${level}</span></td>
+            <td><strong>${eventLabel}</strong></td>
+            <td>${ev.source || '-'}</td>
+            <td>${ev.location_hint || '-'}</td>
+            <td><span style="font-family:var(--font-mono);">${confPercent}%</span></td>
+            <td style="color:var(--text-muted); font-size:0.8rem;">${reasonLabel}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function updateTelemetry(teleList) {
+      if (!teleList || !teleList.length) return;
+      audioChart.addDataPoint(teleList);
+      gasChart.addDataPoint(teleList);
+      tempChart.addDataPoint(teleList);
+    }
+
+    // Initial fetch and auto-polling
+    fetchData();
+    setInterval(fetchData, 1500);
+  </script>
 </body>
 </html>
