@@ -25,6 +25,10 @@ import classify_fire
 # TODO (Lila): simpan state terakhir tiap device di sini (untuk dashboard & rate-of-rise)
 latest_readings = {}
 
+# Jeda minimum antar alert untuk (device, jenis event) yang sama.
+ALERT_COOLDOWN_S = 10.0
+_last_alert_at = {}  # (device_id, event_type) -> epoch detik alert terakhir yang dikirim
+
 
 def on_audio_message(client, userdata, msg):
     payload = json.loads(msg.payload.decode())
@@ -52,6 +56,15 @@ def on_audio_message(client, userdata, msg):
     if result["is_glass_break"]:
         # Bagian A liveness: terindikasi TV/media -> "perlu verifikasi", bukan ALERT penuh (Bab 5.2.1.1).
         event_type = "glass_break_needs_verification" if result["is_media"] else "glass_break"
+        # Satu pecahan kaca biasanya menyebar ke 2-3 window 2 detik berurutan (lihat
+        # uji kaca4-8.m4a) -- jangan kirim alert berulang untuk kejadian yang sama.
+        now = time.time()
+        key = (device_id, event_type)
+        since = now - _last_alert_at.get(key, 0.0)
+        if since < ALERT_COOLDOWN_S:
+            print(f"[audio] {device_id} {event_type} diredam (cooldown, {since:.1f}s < {ALERT_COOLDOWN_S:.0f}s)")
+            return
+        _last_alert_at[key] = now
         publish_alert(client, event_type=event_type,
                        confidence=result["confidence"], source=device_id)
 
