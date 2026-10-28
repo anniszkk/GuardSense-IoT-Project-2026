@@ -89,7 +89,11 @@ def record_audio_window():
         subprocess.run(["termux-microphone-record", "-q"], capture_output=True)
         time.sleep(0.5)
         start = subprocess.run(
-            ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac"],
+            # -r/-b/-c WAJIB eksplisit: tanpa -r, termux merekam di 8000 Hz (AAC 12 kbps),
+            # semua suara > 4 kHz hilang padahal ciri kaca pecah ada di sana (rasio
+            # band tinggi = 0, YAMNet cuma "dengar" Vehicle). 16 kHz = syarat YAMNet.
+            ["termux-microphone-record", "-f", _RECORD_PATH, "-l", str(int(WINDOW_SECONDS)), "-e", "aac",
+             "-r", "16000", "-b", "64", "-c", "1"],
             capture_output=True, text=True,
         )
         if "already in progress" not in start.stdout.lower() and "already in progress" not in start.stderr.lower():

@@ -28,7 +28,10 @@ latest_readings = {}
 
 def on_audio_message(client, userdata, msg):
     payload = json.loads(msg.payload.decode())
-    print(f"[audio] {payload}")
+    # clip_b64 puluhan ribu karakter -- jangan ikut dicetak, ringkas saja.
+    summary = {k: v for k, v in payload.items() if k != "clip_b64"}
+    summary["clip_b64"] = f"<{len(payload.get('clip_b64') or '')} chars>"
+    print(f"[audio] {summary}")
 
     device_id = payload.get("device_id", "unknown")
     if not payload.get("clip_b64") and any(
