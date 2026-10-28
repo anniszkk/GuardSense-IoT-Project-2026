@@ -221,7 +221,7 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Seluruh uji kaca sejauh ini memakai sampel yang diputar lewat speaker lalu direkam mikrofon HP; frekuensi tinggi sudah berkurang dibanding kaca sungguhan. Uji dengan gelas yang benar-benar pecah belum dilakukan.
 
-- Suara yang berlangsung lama atau berulang dan mirip kaca (ketukan kaca, denting gelas, kunci, koin, lonceng) belum diuji; ambang 0,35 dipilih dari data terbatas (lihat Bab 9.1). Cadangan rule-based diketahui menyala untuk suara logam bernada tinggi.
+- Ketukan kaca, denting gelas, kunci, dan koin belum diuji; bel, lonceng, dan denting sudah diuji sebagian lewat sampel dan hasilnya salah terbaca kaca (lihat butir berikutnya). Ambang 0,35 dipilih dari data terbatas (lihat Bab 9.1). Cadangan rule-based diketahui menyala untuk suara logam bernada tinggi.
 
 - Latar media yang keras (musik, TV) bisa menutupi suara kaca sampai skornya mendekati nol, sehingga kaca asli saat TV keras bisa terlewat.
 
@@ -291,19 +291,21 @@ Sampel kaca terpendek (sekitar 1,3 detik) paling mudah terlewat: skornya turun d
 
 Dibagi berdasarkan jalur kerja end-to-end (bukan per jenis aktivitas), supaya setiap anggota memahami penuh satu bagian sistem dari sensor sampai hasil akhir, dan kontribusinya mudah dibuktikan secara individual. Anggota: Annis, Binar, Lila.
 
-## 10.1 Annis — Jalur Audio (Deteksi Pecahan Kaca)
+## 10.1 Annis — Jalur Audio (Deteksi Pecahan Kaca dan Alarm Asap)
 
 | **No** | **Tugas**                                                                                       | **Output**                                                              |
 |--------|-------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
 | 1      | Setup HP A & HP B: install F-Droid, Termux, Termux:API; uji termux-microphone-record            | Kedua HP bisa merekam audio lewat Termux                                |
 | 2      | Implementasi pre-filtering tahap 1: hitung RMS amplitudo per window rekaman di HP               | Script Python di edge yang kirim clip hanya saat amplitudo lewat ambang |
 | 3      | Implementasi klasifikasi tahap 2 (rule-based): cek frekuensi dominan (FFT) dan durasi transient | Fungsi klasifikasi pecahan kaca versi rule-based                        |
-| 4      | Implementasi klasifikasi tahap 2 (AI): load YAMNet, ambil skor kelas Glass shatter/Breaking     | Fungsi klasifikasi pecahan kaca versi YAMNet                            |
+| 4      | Implementasi klasifikasi tahap 2 (AI): load YAMNet, ambil skor kelas Glass, Shatter, Chink/clink  | Fungsi klasifikasi pecahan kaca versi YAMNet                            |
 | 5      | Implementasi liveness check: validasi konteks TV/Speech via YAMNet + rasio amplitudo 2 HP       | Fungsi liveness check terintegrasi ke keputusan akhir                   |
 | 6      | Kalibrasi ambang batas pakai sampel suara nyata (kaca pecah, suara keras lain, cuplikan TV)     | Nilai ambang batas final + catatan hasil kalibrasi                      |
-| 7      | Menulis Bab 4.1, 5.1 (bagian audio), 5.2.1, 5.2.1.1 di laporan akhir                            | Draf bagian laporan terkait audio                                       |
+| 7      | Menulis Bab 4.1, 5.1 (bagian audio), 5.2.1, 5.2.1.1, 5.2.2 (bagian audio) di laporan akhir      | Draf bagian laporan terkait audio                                       |
+| 8      | Implementasi deteksi alarm asap dari audio: YAMNet (kelas Fire alarm dan Smoke detector) dengan cadangan pola beep berulang, pembatalan Alarm clock, dan alert fire_alarm | Fungsi deteksi alarm asap di classify_audio.py dan jenis alert baru di server |
+| 9      | Uji alarm dan bunyi dering rumah tangga (bel pintu, timer, microwave) lewat mikrofon HP; simpan klip debug untuk analisis | Hasil uji per kejadian dan per klip (Bab 9.1) |
 
-**Status (28 Oktober 2026):** Tugas 1 selesai. Tugas 2 selesai (gerbang diturunkan menjadi 0,005; lihat Bab 5.1). Tugas 3 selesai sebagai cadangan. Tugas 4 selesai dan menjadi jalur utama. Tugas 5 sebagian (bagian A selesai; bagian B logikanya selesai tetapi ambangnya belum dikalibrasi dengan dua HP). Tugas 6 sebagian (kalibrasi dengan rekaman HP, belum dengan kaca sungguhan). Tugas 7 sebagian (Bab 4.1, 5.1, 5.2.1, 5.2.1.1 diperbarui di dokumen ini).
+**Status (28 Oktober 2026):** Tugas 1 selesai. Tugas 2 selesai (gerbang diturunkan menjadi 0,005; lihat Bab 5.1). Tugas 3 selesai sebagai cadangan. Tugas 4 selesai dan menjadi jalur utama. Tugas 5 sebagian (bagian A selesai; bagian B logikanya selesai tetapi ambangnya belum dikalibrasi dengan dua HP). Tugas 6 sebagian (kalibrasi dengan rekaman HP, belum dengan kaca sungguhan). Tugas 7 sebagian (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 5.2.2 diperbarui di dokumen ini). Tugas 8 selesai di server (jalur YAMNet dan pola beep); alarm yang hanya dikenali pola beep berlabel perlu verifikasi. Tugas 9 sebagian (sampel diputar lewat speaker pada satu HP; belum dengan alarm asap atau kaca sungguhan, dan belum dengan dua HP).
 
 ## 10.2 Binar — Jalur Gas & Suhu (Deteksi Kebakaran, via Wokwi)
 
