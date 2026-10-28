@@ -6,7 +6,7 @@ Mata Kuliah Internet of Things
 
 Dokumen Perencanaan Proyek (untuk diskusi kelompok)
 
-*Diperbarui 28 Oktober 2026: ditambahkan status implementasi dan hasil kalibrasi jalur audio (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 6.2, 8, 9.1, 10.1). Ditambahkan hasil uji gas-suhu di Wokwi (Bab 5.2.2, 6.2, 8, 9.2, 10.2) dan status server serta dashboard hasil penggabungan branch integrasi (Bab 5.2.2, 8). Notifikasi ke HP lain belum diperbarui.*
+*Diperbarui 28 Oktober 2026: ditambahkan status implementasi dan hasil kalibrasi jalur audio (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 6.2, 8, 9.1, 10.1). Ditambahkan hasil uji gas-suhu di Wokwi, server, dan dashboard (Bab 4.2, 4.3, 5.1, 5.2.2, 6.2, 7, 8, 9.2, 10.2). Notifikasi ke HP lain belum diperbarui.*
 
 # 1. Masalah dan Ide
 
@@ -95,7 +95,7 @@ Mode lama (rekam 2 detik, berhenti, mulai lagi) masih tersedia sebagai cadangan 
 
 **Lokasi pemasangan:** Dipasang di ESP32, idealnya di titik yang berisiko kebakaran (dapur) dan satu titik lain (kamar) untuk perbandingan lokasi, dijauhkan dari jendela/ventilasi agar tidak gampang false alarm dari asap luar.
 
-**Cara pakai (teknis):** MQ-2 dihubungkan ke pin analog ESP32, dibaca berkala (misal tiap 1-2 detik), nilai mentah dikonversi ke estimasi ppm sesuai datasheet/kalibrasi sederhana.
+**Cara pakai (teknis):** MQ-2 dihubungkan ke pin analog ESP32, dibaca berkala (misal tiap 1-2 detik), nilai mentah dikonversi ke estimasi ppm sesuai datasheet/kalibrasi sederhana. Saat ini firmware mengirim nilai ADC mentah (0-4095) dan belum mengonversinya ke ppm (lihat Bab 8).
 
 **Fitur yang diambil:** Nilai konsentrasi gas/asap dan rate-of-rise (laju kenaikan dari waktu ke waktu), bukan sekadar nilai ambang tunggal.
 
@@ -107,7 +107,7 @@ Mode lama (rekam 2 detik, berhenti, mulai lagi) masih tersedia sebagai cadangan 
 
 **Lokasi pemasangan:** Satu paket dengan ESP32 dan MQ-2 di tiap titik.
 
-**Cara pakai (teknis):** DHT22 terhubung ke pin digital ESP32, dibaca berkala bersamaan dengan pembacaan MQ-2.
+**Cara pakai (teknis):** DHT22 terhubung ke pin digital ESP32, dibaca berkala bersamaan dengan pembacaan MQ-2. Saat ini firmware hanya membaca suhu; kelembapan belum dibaca (lihat Bab 9.2).
 
 **Fitur yang diambil:** Suhu saat ini dan rate-of-rise suhu, dikorelasikan dengan rate-of-rise gas untuk keputusan akhir.
 
@@ -154,7 +154,7 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 
 - *Bagian A sudah dibuat dengan cakupan lebih sempit daripada rancangan.* Penilaian dilakukan pada **klip yang sama**: bila rata-rata skor Television, Speech, atau Music selama klip di atas 0,3 dan klip itu juga lolos klasifikasi kaca, event dikirim sebagai jenis `glass_break_needs_verification` (bukan `glass_break`) ke topic alerts. Belum dikerjakan: konteks klip sebelum dan sesudahnya. Label "perlu verifikasi" sudah tampil di dashboard (hasil penggabungan branch integrasi).
 - *Uji simulasi (offline):* tiga sampel kaca ditempel di atas bicara dan musik dengan dua tingkat volume latar (12 campuran). Kaca polos: skor media maksimal 0,01-0,05, tidak ditandai. Pada seluruh campuran, skor media 0,34-0,94 sehingga ditandai TV. Pada 7 dari 12 campuran skor kaca tetap di atas ambang (0,43-0,90) sehingga menghasilkan "perlu verifikasi"; pada 5 campuran lainnya skor kaca jatuh ke 0,00-0,11 karena latar menutupi kaca, sehingga tidak ada alert sama sekali. Ini aman terhadap TV, tetapi artinya kaca asli yang pecah saat TV keras bisa terlewat. Belum diuji dengan pemutaran lewat mikrofon HP.
-- *Bagian B sudah dibuat di server, tetapi ambangnya belum dikalibrasi.* Server menyimpan RMS klip tiap HP (dengan jam server saat klip tiba, karena jam dua HP bisa selisih beberapa detik). Saat satu HP mendeteksi kaca, RMS-nya dibandingkan dengan klip HP lain yang tiba dalam 3 detik; rasio di bawah 1,5 dianggap "setara" (kemungkinan sumber tersebar seperti TV) dan event diberi jenis `glass_break_needs_verification` dengan alasan `amplitude_equal`. Nilai 1,5 hanya tebakan awal dan harus ditentukan dari uji dua HP sungguhan (skenario 5). HP lain yang tidak mengirim klip di sekitar kejadian dianggap hening (rasio timpang); HP lain yang tidak terlihat lebih dari 30 detik dianggap mati dan bagian B tidak menilai. Kegagalan ambang ini aman: kaca asli hanya diberi label "perlu verifikasi", alert tidak dibuang. Logika sudah lolos 7 skenario uji simulasi; belum diuji dengan dua HP.
+- *Bagian B sudah dibuat di server, tetapi ambangnya belum dikalibrasi.* Server menyimpan RMS klip tiap HP (dengan jam server saat klip tiba, karena jam dua HP bisa selisih beberapa detik). Saat satu HP mendeteksi kaca, RMS-nya dibandingkan dengan klip HP lain yang tiba dalam 3 detik; rasio di bawah 1,5 dianggap "setara" (kemungkinan sumber tersebar seperti TV) dan event diberi jenis `glass_break_needs_verification` dengan alasan `amplitude_equal`. Nilai 1,5 hanya tebakan awal dan harus ditentukan dari uji dua HP sungguhan (skenario 5). HP lain yang tidak mengirim klip di sekitar kejadian dianggap hening (rasio timpang); HP lain yang tidak terlihat lebih dari 30 detik dianggap mati dan bagian B tidak menilai. Kegagalan ambang ini aman: kaca asli hanya diberi label "perlu verifikasi", alert tidak dibuang. Logika sudah lolos 11 skenario uji simulasi (7 untuk kaca, 4 untuk alarm); belum diuji dengan dua HP.
 
 **Keputusan akhir (dengan liveness check):** Event ditandai ALERT penuh hanya jika lolos klasifikasi Glass shatter DAN tidak terindikasi berasal dari TV/media berdasarkan salah satu atau kedua validasi di atas. Jika terindikasi dari TV namun tetap ingin dicatat, event bisa ditampilkan di dashboard dengan label tingkat keyakinan lebih rendah, bukan dihapus begitu saja.
 
@@ -203,7 +203,7 @@ PROJECT_ID diganti dengan nama unik kelompok agar topic tidak bercampur dengan k
 
 **Syarat jaringan:** Supaya penghuni lain bisa membuka dashboard dari HP/laptop masing-masing, perangkat tersebut harus berada di WiFi/hotspot yang sama dengan laptop server. Ini memenuhi ketentuan "dashboard harus satu jaringan dengan pengguna", meski data yang ditampilkan bersumber dari broker MQTT di cloud.
 
-**Konten yang ditampilkan:** Status masing-masing edge (Normal/Alert), riwayat event dengan timestamp dan lokasi, grafik amplitudo/gas/suhu dari waktu ke waktu, dan indikator umum sistem (misal status ARM/DISARM bila ditambahkan).
+**Konten yang ditampilkan:** Status masing-masing edge (Normal/Alert), riwayat event dengan timestamp dan lokasi, grafik amplitudo/gas/suhu dari waktu ke waktu, dan indikator umum sistem (misal status ARM/DISARM bila ditambahkan). Status implementasi: halaman sudah dibuat (`dashboard/index.html`, dilayani `server.py` di port 8000, polling tiap 1,5 detik) dengan status sistem (Aman, Perlu verifikasi, Bahaya), kartu empat perangkat, tiga grafik (25 titik terakhir), riwayat 15 kejadian, dan alarm suara beep opsional. Belum ada: indikator ARM/DISARM, notifikasi ke HP lain, dan uji akses dari perangkat lain.
 
 # 8. Batasan Sistem
 
@@ -270,7 +270,7 @@ Metode: rekaman mikrofon HP asli (Termux, 16 kHz) untuk sampel yang diputar lewa
 | 2 | Hewan menyenggol benda kaca | Belum | - |
 | 3 | Suara keras lain (pintu dibanting, buku jatuh) | Sebagian | Pintu dibanting (dua jenis), musik, bicara, tawa, bising ruangan, suara memasak, dan TV static: rekaman offline skor kaca maksimal 0,18; uji live sekitar 62 klip (122 detik) tidak ada yang ditandai kaca, skor maksimal 0,08. Buku jatuh, kunci, dan koin belum diuji |
 | 4 | Kaca di TV dengan dialog/musik | Sebagian | Hanya simulasi offline (Bab 5.2.1.1); belum lewat mikrofon HP |
-| 5 | Rasio amplitudo dua HP | Logika selesai, kalibrasi belum | Server sudah membandingkan RMS dua HP (7 skenario simulasi lolos); ambang rasio 1,5 belum dikalibrasi dengan dua HP sungguhan |
+| 5 | Rasio amplitudo dua HP | Logika selesai, kalibrasi belum | Server sudah membandingkan RMS dua HP (11 skenario simulasi lolos: 7 kaca, 4 alarm); ambang rasio 1,5 belum dikalibrasi dengan dua HP sungguhan |
 | - | Bunyi alarm asap (Bab 5.2.2, audio) | Lewat mikrofon HP (sampel via speaker) | Per kejadian: 4 dari 4 alarm terdeteksi 0-10 detik setelah mulai (fire-alarm-33770 langsung lewat YAMNet; alarm sekolah dan nada EAS +4 detik, bel 6708 +10 detik, ketiganya lewat pola beep dan berlabel perlu verifikasi). Per klip: dari 44 klip yang bernada alarm, 18 ditandai (41%); dari 211 klip mikrofon lain tidak ada yang ditandai alarm. Sebelum lewat mikrofon (offline, klip bersih) 7/7, 30/31, 4/4, 2/14 jendela |
 | - | Bunyi dering rumah tangga (bel pintu, timer dapur) | Lewat mikrofon HP (sampel via speaker) | Tidak ada alert. Pembatalan Alarm clock membuang 1 klip timer yang salah, tetapi juga 1 klip nada EAS yang benar (skor Alarm clock 0,54, tepat di ambang 0,5) |
 | - | Bunyi berdering/berdenting vs kaca (bel, lonceng, nada EAS, denting microwave) | Kelemahan terbuka | Enam klip salah ditandai kaca dalam satu sesi (bel 6708 empat klip, skor 0,35-0,85; awal nada EAS 0,49; satu lonceng tak teridentifikasi 0,39). Denting microwave offline juga 0,86. Belum ada pembeda andal (lihat Bab 8) |
