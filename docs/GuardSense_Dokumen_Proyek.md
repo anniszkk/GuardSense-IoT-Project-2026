@@ -6,6 +6,8 @@ Mata Kuliah Internet of Things
 
 Dokumen Perencanaan Proyek (untuk diskusi kelompok)
 
+*Diperbarui 28 Oktober 2026: ditambahkan status implementasi dan hasil kalibrasi jalur audio (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 6.2, 8, 9.1, 10.1). Bagian gas/suhu, dashboard, dan notifikasi belum diperbarui.*
+
 # 1. Masalah dan Ide
 
 ## 1.1 Latar Belakang Masalah
@@ -79,9 +81,11 @@ Alur data dari sensor hingga notifikasi mengikuti empat lapis standar IoT: Senso
 
 **Lokasi pemasangan:** HP diletakkan di titik tetap, idealnya jauh dari ventilasi/jendela langsung agar tidak mudah terpengaruh suara dari luar.
 
-**Cara pakai (teknis):** Lewat Termux, gunakan termux-microphone-record untuk merekam audio singkat (window 1-2 detik berurutan) dalam format .wav, kemudian file diproses dengan Python (numpy/scipy untuk FFT, atau langsung dikirim ke processing server bila lolos pre-filter).
+**Cara pakai (teknis):** Lewat Termux, `termux-microphone-record` merekam **terus-menerus** ke satu file opus (`-l 0 -e opus -r 16000 -b 96 -c 1`). Opsi `-r 16000` wajib: tanpa itu Termux merekam di 8 kHz, sehingga seluruh suara di atas 4 kHz (ciri utama pecahan kaca) hilang dan klasifikasi gagal total. Skrip Python membaca file itu sambil terus tumbuh (ffmpeg, hanya bagian yang belum diproses), memotong klip 3 detik tiap 2 detik (tumpang-tindih 1 detik supaya satu kejadian tidak terpotong di batas klip), dan mengirim klip yang tidak hening ke processing server. File rekaman dimulai ulang tiap 30 menit, dengan celah rekam sekitar 5-9 detik tiap pergantian (perkiraan, belum diukur di HP).
 
-**Fitur yang diambil:** Amplitudo RMS (seberapa keras) dan frekuensi dominan (lewat FFT) dari tiap window rekaman.
+Mode lama (rekam 2 detik, berhenti, mulai lagi) masih tersedia sebagai cadangan (`EDGE_MODE=window`), tetapi punya jeda tak terekam sekitar 1,3-2,5 detik tiap siklus sehingga HP hanya mendengar sekitar 34% waktu; karena itu tidak dipakai sebagai mode utama.
+
+**Fitur yang diambil:** Amplitudo RMS (seberapa keras), frekuensi dominan (FFT, hanya sebagai informasi tambahan), dan rasio energi band tinggi (di atas 2 kHz) dari tiap klip. Klip audio itu sendiri ikut dikirim supaya bisa diklasifikasi YAMNet di server.
 
 **Alasan dipilih:** Satu-satunya cara praktis mendeteksi pecahan kaca dari jarak tertentu tanpa sensor tambahan; sound merambat lewat udara sehingga tidak butuh kontak fisik seperti sensor getar.
 
@@ -119,10 +123,12 @@ Tujuan tahap ini adalah mengurangi data yang perlu dikirim dan diproses lebih la
 
 | **Sumber**           | **Perhitungan**                                                  | **Kondisi kirim ke cloud**                                         |
 |----------------------|------------------------------------------------------------------|--------------------------------------------------------------------|
-| Mikrofon (HP A/B)    | RMS amplitudo per window rekaman                                 | Amplitudo melewati ambang kekerasan suara tertentu                 |
+| Mikrofon (HP A/B)    | RMS amplitudo per klip rekaman                                   | Klip tidak hening (RMS di atas 0,005)                              |
 | MQ-2 + DHT22 (ESP32) | Rate-of-rise (selisih nilai per satuan waktu) untuk gas dan suhu | Laju kenaikan gas dan/atau suhu melewati ambang kecepatan tertentu |
 
 Jenis algoritma: rule-based / threshold logic — termasuk kategori "algoritma lain" sesuai ketentuan tugas.
+
+**Temuan kalibrasi (audio):** pada rekaman mikrofon HP asli, RMS tidak bisa membedakan pecahan kaca dari suara lain. Klip kaca pecah hanya berkisar RMS 0,007-0,02 (event singkat "diencerkan" oleh bising sekitar), sama atau lebih pelan daripada bising angin/kendaraan (0,009-0,013), dan jauh lebih pelan daripada suara sesudahnya (disapu/diinjak, 0,05-0,16). Ambang awal 0,02 justru memblokir klip kaca yang dikenali YAMNet, sehingga diturunkan ke 0,005 (sedikit di atas keheningan total). Dengan demikian gerbang tahap 1 untuk audio hanya berfungsi membuang keheningan; pembedaan kaca dari suara lain sepenuhnya dilakukan di tahap 2. Pemicu lonjakan suara (lonjakan RMS dan lonjakan energi di atas 2 kHz) juga dicoba dan tidak dipakai: rekaman negatif punya lonjakan sebesar kaca, sedangkan kaca yang pelan tidak melewati rasio.
 
 ## 5.2 Tahap 2 — Klasifikasi di Processing Server
 
@@ -130,11 +136,11 @@ Data yang lolos tahap 1 diteruskan ke laptop untuk diklasifikasi lebih akurat.
 
 ### 5.2.1 Klasifikasi Audio (Pecahan Kaca)
 
-**Pendekatan A (rule-based):** Cek apakah amplitudo RMS tinggi, frekuensi dominan di atas sekitar 3-4 kHz, dan durasi event singkat (\<0.5 detik, bersifat transient). Kombinasi ciri ini membedakan pecahan kaca dari suara keras lain seperti pintu dibanting atau benda jatuh.
+**Jalur utama — YAMNet (AI):** Klip dikirim ke laptop sebagai WAV 16 kHz mono, lalu model pre-trained YAMNet (521 kelas AudioSet, tanpa training sendiri) dijalankan sekali per klip. Skor pecahan kaca adalah nilai **maksimum antar-frame** (kejadian transient hanya menempati 1-2 frame, rata-rata akan meredamnya) dari kelas **Glass, Shatter, dan Chink/clink**. Kelas Breaking dan Smash/crash sengaja tidak dipakai: pada uji, Breaking menyala 0,60 untuk pintu kayu dibanting, sedangkan Smash/crash selalu di bawah 0,12 untuk kaca. Klip dianggap pecahan kaca bila skor di atas **0,35** (diturunkan dari 0,5; lihat Bab 9.1).
 
-**Pendekatan B (AI, opsional/upgrade):** Gunakan model pre-trained YAMNet (521 kelas suara dari dataset AudioSet) untuk audio clip yang terkirim, ambil skor probabilitas kelas Glass shatter, Glass, Breaking, dan Crockery breaking and smashing. Tidak perlu training dari nol karena model sudah dilatih sebelumnya.
+**Cadangan — rule-based:** Dipakai hanya bila YAMNet tidak tersedia (TensorFlow atau model gagal dimuat). Klip dianggap kaca bila RMS minimal 0,005 dan rasio energi band tinggi (di atas 2 kHz setelah high-pass 200 Hz, dihitung di frame yang keras) minimal 0,5. Versi awal (frekuensi dominan di atas 3 kHz dan durasi di bawah 0,5 detik) terbukti tidak andal pada rekaman HP: FFT satu window penuh didominasi bising rendah yang berlangsung terus-menerus (hasilnya sekitar 100 Hz), sehingga ciri kaca yang singkat tertimbun. Cadangan ini juga menyala untuk suara logam bernada tinggi (kunci, lonceng), jadi lebih lemah daripada YAMNet.
 
-**Keputusan akhir:** Event dianggap pecahan kaca bila salah satu pendekatan (atau keduanya, bila dipakai bersamaan) memberi hasil positif di atas ambang kepercayaan tertentu.
+**Keputusan akhir:** Keputusan diambil dari YAMNet; rule-based hanya dipakai bila YAMNet gagal. Setelah ada alert, alert berikutnya untuk HP dan jenis event yang sama diredam selama 10 detik (cooldown), karena satu pecahan kaca biasanya tertangkap di 2-3 klip berurutan.
 
 ### 5.2.1.1 Liveness Check — Membedakan Event Asli dari Suara TV/Sinetron
 
@@ -143,6 +149,12 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 **A. Validasi konteks suara di sekitar event (via YAMNet):** YAMNet, selain mendeteksi kelas Glass shatter, juga bisa mendeteksi kelas Television, Speech, dan Music pada window audio yang sama atau yang berdekatan waktunya. Jika skor Glass shatter tinggi namun disertai skor Television/Speech/Music yang juga tinggi pada saat bersamaan atau tepat sebelum-sesudahnya, event ditandai sebagai kemungkinan berasal dari TV/sinetron dan tidak langsung dianggap ALERT (bisa ditandai "perlu verifikasi" di dashboard, bukan langsung notifikasi darurat). Jika skor Glass shatter tinggi tanpa disertai suara dialog/musik/televisi di sekitarnya, event lebih meyakinkan sebagai kejadian nyata.
 
 **B. Perbandingan amplitudo antar dua mikrofon (proxy sederhana pengganti DoA):** Karena GuardSense sudah memakai dua HP di dua titik berbeda, posisi ini bisa difungsikan sebagai microphone array sederhana. Suara TV cenderung tersebar relatif merata ke seluruh ruangan sehingga amplitudo yang tertangkap di kedua HP relatif setara. Suara pecahan kaca nyata adalah sumber titik (point source) yang intensitasnya turun tajam seiring jarak, sehingga amplitudo di HP yang lebih dekat jauh lebih tinggi dibanding HP yang lebih jauh. Rasio amplitudo antar kedua HP dipakai sebagai sinyal tambahan: rasio timpang menguatkan dugaan event nyata, rasio yang relatif setara menguatkan dugaan suara dari sumber tetap seperti TV.
+
+**Status implementasi (diperbarui):**
+
+- *Bagian A sudah dibuat dengan cakupan lebih sempit daripada rancangan.* Penilaian dilakukan pada **klip yang sama**: bila rata-rata skor Television, Speech, atau Music selama klip di atas 0,3 dan klip itu juga lolos klasifikasi kaca, event dikirim sebagai jenis `glass_break_needs_verification` (bukan `glass_break`) ke topic alerts. Belum dikerjakan: konteks klip sebelum dan sesudahnya, serta label "perlu verifikasi" di dashboard (dashboard belum dibuat).
+- *Uji simulasi (offline):* tiga sampel kaca ditempel di atas bicara dan musik dengan dua tingkat volume latar (12 campuran). Kaca polos: skor media maksimal 0,01-0,05, tidak ditandai. Pada seluruh campuran, skor media 0,34-0,94 sehingga ditandai TV. Pada 7 dari 12 campuran skor kaca tetap di atas ambang (0,43-0,90) sehingga menghasilkan "perlu verifikasi"; pada 5 campuran lainnya skor kaca jatuh ke 0,00-0,11 karena latar menutupi kaca, sehingga tidak ada alert sama sekali. Ini aman terhadap TV, tetapi artinya kaca asli yang pecah saat TV keras bisa terlewat. Belum diuji dengan pemutaran lewat mikrofon HP.
+- *Bagian B belum diimplementasikan* (butuh HP B aktif dan penyimpanan RMS terakhir per HP di server).
 
 **Keputusan akhir (dengan liveness check):** Event ditandai ALERT penuh hanya jika lolos klasifikasi Glass shatter DAN tidak terindikasi berasal dari TV/media berdasarkan salah satu atau kedua validasi di atas. Jika terindikasi dari TV namun tetap ingin dicatat, event bisa ditampilkan di dashboard dengan label tingkat keyakinan lebih rendah, bukan dihapus begitu saja.
 
@@ -159,7 +171,7 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 | **Tahap**                           | **Isi pemrosesan**                                             | **Kategori algoritma**                |
 |-------------------------------------|----------------------------------------------------------------|---------------------------------------|
 | 1\. Pre-filtering (edge)            | RMS amplitudo, rate-of-rise gas & suhu, perbandingan ke ambang | Algoritma lain (rule-based/threshold) |
-| 2\. Klasifikasi (processing server) | YAMNet (model AI pre-trained) dan/atau rule korelasi gas-suhu  | Algoritma AI dan/atau algoritma lain  |
+| 2\. Klasifikasi (processing server) | YAMNet (AI, jalur utama audio; rule-based rasio band tinggi sebagai cadangan) dan rule korelasi gas-suhu | Algoritma AI dan/atau algoritma lain  |
 
 # 6. Komunikasi dan Cloud
 
@@ -171,13 +183,15 @@ Seluruh edge device dan processing server berkomunikasi lewat broker MQTT publik
 
 | **Topic**                                      | **Diisi oleh**    | **Isi payload**                                                    |
 |------------------------------------------------|-------------------|--------------------------------------------------------------------|
-| guardsense/\<PROJECT_ID\>/edge/hpA/audio       | HP A              | Hasil pre-filter audio: amplitudo, frekuensi dominan, timestamp    |
+| guardsense/\<PROJECT_ID\>/edge/hpA/audio       | HP A              | Klip audio 3 detik (WAV 16 kHz mono, base64) + RMS, frekuensi dominan, rasio energi band tinggi, timestamp |
 | guardsense/\<PROJECT_ID\>/edge/hpB/audio       | HP B              | Sama seperti di atas, titik berbeda                                |
 | guardsense/\<PROJECT_ID\>/edge/esp32_dapur/env | ESP32 dapur       | Kadar gas, suhu, rate-of-rise, timestamp                           |
 | guardsense/\<PROJECT_ID\>/edge/esp32_kamar/env | ESP32 kamar       | Sama seperti di atas, titik berbeda                                |
-| guardsense/\<PROJECT_ID\>/alerts               | Processing server | Status klasifikasi akhir: jenis event, lokasi, tingkat kepercayaan |
+| guardsense/\<PROJECT_ID\>/alerts               | Processing server | Status klasifikasi akhir: jenis event (`glass_break` atau `glass_break_needs_verification`), lokasi, tingkat kepercayaan |
 
 PROJECT_ID diganti dengan nama unik kelompok agar topic tidak bercampur dengan kelompok lain yang memakai broker publik yang sama.
+
+**Catatan privasi dan trafik:** Karena klip audio dikirim lewat broker publik, siapa pun yang tahu atau menebak nama topic bisa mendengarnya; PROJECT_ID default tidak boleh dipakai. Satu klip sekitar 128 KB (base64), sekitar 500 kbps terus-menerus per HP. Jika audio dianggap terlalu sensitif atau trafik jadi masalah, alternatifnya broker privat atau pengiriman klip dalam format terkompresi (opus, sekitar 8 kali lebih kecil).
 
 # 7. Dashboard
 
@@ -201,6 +215,18 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Liveness check (pembeda suara TV/sinetron vs event nyata) menggunakan proxy sederhana (konteks suara sekitar via YAMNet dan rasio amplitudo dua mikrofon), bukan direction-of-arrival presisi seperti pada sistem komersial yang memakai microphone array tersinkronisasi. Skenario yang tetap berpotensi lolos sebagai false alarm: adegan kaca pecah di TV yang diputar tanpa dialog/musik bersamaan, atau posisi TV yang kebetulan sama jaraknya dari kedua HP sehingga rasio amplitudo terlihat timpang seperti event nyata.
 
+- Skor YAMNet pada rekaman mikrofon HP bervariasi antar-klip untuk bunyi yang sama (0,00-0,95), bergantung pada posisi kejadian di dalam klip, volume, dan jarak. Kejadian yang pelan (hanya sedikit di atas bising latar) kadang terdeteksi dan kadang tidak. Kejadian berdurasi 1 detik atau kurang dijamin utuh di setidaknya satu klip; yang lebih panjang bisa terbelah di dua klip.
+
+- Seluruh uji kaca sejauh ini memakai sampel yang diputar lewat speaker lalu direkam mikrofon HP; frekuensi tinggi sudah berkurang dibanding kaca sungguhan. Uji dengan gelas yang benar-benar pecah belum dilakukan.
+
+- Suara yang berlangsung lama atau berulang dan mirip kaca (ketukan kaca, denting gelas, kunci, koin, lonceng) belum diuji; ambang 0,35 dipilih dari data terbatas (lihat Bab 9.1). Cadangan rule-based diketahui menyala untuk suara logam bernada tinggi.
+
+- Latar media yang keras (musik, TV) bisa menutupi suara kaca sampai skornya mendekati nol, sehingga kaca asli saat TV keras bisa terlewat.
+
+- Audio rumah dikirim lewat broker publik (lihat Bab 6.2). HP harus terus menyala dan dicolok ke charger, Termux perlu dikecualikan dari optimasi baterai, dan mikrofon tidak bisa dipakai bersamaan dengan aplikasi lain. Ada celah rekam saat pergantian file (tiap 30 menit).
+
+- Label "perlu verifikasi" belum tampil di dashboard karena dashboard belum dibuat.
+
 # 9. Rencana Pengujian
 
 Pengujian mencakup skenario positif (event harus terdeteksi) dan skenario negatif (event serupa yang seharusnya tidak memicu ALERT), supaya hasil demo dan laporan lebih kredibel.
@@ -218,6 +244,33 @@ Pengujian mencakup skenario positif (event harus terdeteksi) dan skenario negati
 | 9      | Uji jaringan: dashboard diakses dari HP lain di WiFi yang sama                                                                       | Dashboard dapat diakses dan menampilkan data real-time dari broker MQTT                                                                                                                                                                                           |
 | 10     | Uji latensi notifikasi                                                                                                               | Waktu dari event terjadi hingga notifikasi diterima di HP lain dicatat dan dilaporkan (target idealnya di bawah beberapa detik)                                                                                                                                   |
 
+## 9.1 Hasil Pengujian dan Kalibrasi Awal Jalur Audio (diperbarui)
+
+Metode: rekaman mikrofon HP asli (Termux, 16 kHz) untuk sampel yang diputar lewat speaker laptop, lalu dinilai YAMNet di laptop. Hasil di bawah menyangkut jalur audio saja dan berasal dari sampel terbatas.
+
+| **No** | **Skenario (Bab 9)** | **Status** | **Hasil sejauh ini** |
+|--------|----------------------|------------|----------------------|
+| 1 | Gelas kaca dijatuhkan di dekat HP A | Belum dengan gelas sungguhan | Sampel kaca lewat speaker: pada satu uji 94 detik terkirim 4 alert (skor 0,47-0,76); pada uji lain 9 alert dalam sekitar 220 detik (0,37-0,83), dan sebagian klip kaca tidak lolos karena skornya 0,2-0,34 |
+| 2 | Hewan menyenggol benda kaca | Belum | - |
+| 3 | Suara keras lain (pintu dibanting, buku jatuh) | Sebagian | Pintu dibanting (dua jenis), musik, bicara, tawa, bising ruangan, suara memasak, dan TV static: rekaman offline skor kaca maksimal 0,18; uji live sekitar 62 klip (122 detik) tidak ada yang ditandai kaca, skor maksimal 0,08. Buku jatuh, kunci, dan koin belum diuji |
+| 4 | Kaca di TV dengan dialog/musik | Sebagian | Hanya simulasi offline (Bab 5.2.1.1); belum lewat mikrofon HP |
+| 5 | Rasio amplitudo dua HP | Belum | Butuh HP B dan liveness bagian B |
+| 10 | Latensi notifikasi | Belum | - |
+
+Parameter yang berubah selama kalibrasi:
+
+| **Parameter** | **Awal** | **Sekarang** | **Alasan** |
+|---------------|----------|--------------|------------|
+| Sample rate rekaman | Default Termux (8 kHz) | 16 kHz (`-r 16000`) | Pada 8 kHz suara di atas 4 kHz hilang; seluruh skor kaca 0 |
+| Gerbang RMS | 0,02 | 0,005 | Klip kaca hanya RMS 0,007-0,02; lebih pelan dari bising angin/kendaraan |
+| Ambang skor YAMNet | 0,5 | 0,35 | Klip non-kaca maksimal 0,08 (uji live) dan 0,18 (rekaman negatif); klip kaca 0,37-0,97, sering 0,37-0,49 |
+| Kelas kaca | Glass shatter, Glass, Breaking, Crockery breaking | Glass, Shatter, Chink/clink | Breaking menyala 0,60 untuk pintu dibanting; Smash/crash selalu di bawah 0,12 untuk kaca |
+| Skor antar-frame | Rata-rata | Maksimum | Kejadian transient hanya 1-2 frame |
+| Bentuk klip | Window 2 detik, rekam-berhenti-ulang (jeda 1,3-2,5 detik) | Klip 3 detik tiap 2 detik dari rekaman kontinu | Kejadian di jeda tidak terekam, yang di batas window terpotong |
+| Rotasi file rekaman | Tiap 60 detik (HP tidak mendengar sekitar 9 detik tiap 64 detik) | Tiap 30 menit | Seluruh file tidak lagi di-decode tiap detik |
+
+Sampel kaca terpendek (sekitar 1,3 detik) paling mudah terlewat: skornya turun dari 0,89 menjadi 0,29 ketika volume putar diturunkan ke sekitar 12% (simulasi dengan bising mikrofon HP).
+
 # 10. Pembagian Tugas
 
 Dibagi berdasarkan jalur kerja end-to-end (bukan per jenis aktivitas), supaya setiap anggota memahami penuh satu bagian sistem dari sensor sampai hasil akhir, dan kontribusinya mudah dibuktikan secara individual. Anggota: Annis, Binar, Lila.
@@ -233,6 +286,8 @@ Dibagi berdasarkan jalur kerja end-to-end (bukan per jenis aktivitas), supaya se
 | 5      | Implementasi liveness check: validasi konteks TV/Speech via YAMNet + rasio amplitudo 2 HP       | Fungsi liveness check terintegrasi ke keputusan akhir                   |
 | 6      | Kalibrasi ambang batas pakai sampel suara nyata (kaca pecah, suara keras lain, cuplikan TV)     | Nilai ambang batas final + catatan hasil kalibrasi                      |
 | 7      | Menulis Bab 4.1, 5.1 (bagian audio), 5.2.1, 5.2.1.1 di laporan akhir                            | Draf bagian laporan terkait audio                                       |
+
+**Status (28 Oktober 2026):** Tugas 1 selesai. Tugas 2 selesai (gerbang diturunkan menjadi 0,005; lihat Bab 5.1). Tugas 3 selesai sebagai cadangan. Tugas 4 selesai dan menjadi jalur utama. Tugas 5 sebagian (bagian A selesai, bagian B belum). Tugas 6 sebagian (kalibrasi dengan rekaman HP, belum dengan kaca sungguhan). Tugas 7 sebagian (Bab 4.1, 5.1, 5.2.1, 5.2.1.1 diperbarui di dokumen ini).
 
 ## 10.2 Binar — Jalur Gas & Suhu (Deteksi Kebakaran, via Wokwi)
 
