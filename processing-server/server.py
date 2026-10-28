@@ -1,48 +1,84 @@
-"""PIC: Lila. Orkestrasi utama: subscribe MQTT, panggil klasifikasi
-(classify_audio.py punya Annis, classify_fire.py punya Binar), publish alert,
-dan serve dashboard di localhost:8000.
-Lihat docx Bab 3 (arsitektur), Bab 6 (MQTT), Bab 7 (dashboard).
-
-on_audio_message: klasifikasi audio lewat classify_audio.classify_audio_clip (Annis; YAMNet
-utama, rule-based cadangan), liveness check bagian A (konteks TV/bicara/musik di klip yang sama)
-dan bagian B (rasio RMS antar HP, butuh 2 HP aktif; ambang belum dikalibrasi), lalu cooldown alert.
+"""GuardSense processing server
+PIC: Lila. Orkestrasi utama: subscribe MQTT, simpan state device, panggil klasifikasi
+audio (classify_audio punya Annis) dan gas/suhu (classify_fire punya Binar),
+lakukan liveness check (A: media context, B: RMS ratio antar HP), cooldown alert,
+publish alert ke topic alerts, dan host dashboard web Flask di localhost:8000.
+Lihat docs/GuardSense_Dokumen_Proyek.md Bab 3, 5, 6, 7.
 """
 
-import base64
-import json
-import os
 import sys
+import json
 import time
+import time as _real_time
+import os
+import base64
+from collections import deque
+import threading
 
-sys.path.append("..")
+def _format_time(epoch_sec: float) -> str:
+    try:
+        return _real_time.strftime("%H:%M:%S", _real_time.localtime(epoch_sec))
+    except Exception:
+        return f"{epoch_sec:.1f}s"
+
+def _format_datetime(epoch_sec: float) -> str:
+    try:
+        return _real_time.strftime("%Y-%m-%d %H:%M:%S", _real_time.localtime(epoch_sec))
+    except Exception:
+        return f"{epoch_sec:.1f}s"
+
+# Add repository root to sys.path so shared modules are importable
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
+
 from shared.mqtt_connection import create_client, topic
 from shared.messages import AlertMessage
 
 import classify_audio
 import classify_fire
 
-# TODO (Lila): simpan state terakhir tiap device di sini (untuk dashboard & rate-of-rise)
-latest_readings = {}
+# ---------------------------------------------------------------------------
+# Global state (protected by lock because accessed from MQTT thread & Flask thread)
+# ---------------------------------------------------------------------------
+_state_lock = threading.Lock()
+# device_id -> {"kind": "audio"|"env", "data": payload, "last_seen": epoch}
+latest_readings: dict[str, dict] = {}
+# Recent alert history (max 200 entries)
+event_history: deque[dict] = deque(maxlen=200)
+# Recent time-series telemetry for dashboard charts (max 300 entries)
+telemetry_history: deque[dict] = deque(maxlen=300)
+# Env cooldown tracker: (device_id, event_type, level) -> last publish epoch
+_last_alert_time: dict[tuple, float] = {}
+# Fire detection candidate buffer: device_id -> timestamp of first detection
+_fire_candidate: dict[str, float] = {}
 
 # Debug: kalau env SAVE_CLIPS_DIR diisi, setiap klip audio yang masuk disimpan sebagai .wav di folder itu
 # (nama berisi jam, device, skor kaca/alarm), supaya klip yang salah deteksi bisa dinilai ulang offline
-# lewat test_recording.py. ~64 KB per detik, jadi hanya untuk sesi uji.
 SAVE_CLIPS_DIR = os.getenv("SAVE_CLIPS_DIR")
 
-# Jeda minimum antar alert untuk (device, jenis event) yang sama.
+# ---------------------------------------------------------------------------
+# Audio-specific state & helpers (liveness B & cooldown)
+# ---------------------------------------------------------------------------
 ALERT_COOLDOWN_S = 10.0
-ALARM_COOLDOWN_S = 30.0  # alarm asap berbunyi terus-menerus, jadi jedanya lebih panjang daripada kaca
-_last_alert_at = {}  # (device_id, event_type) -> epoch detik alert terakhir yang dikirim
+ALARM_COOLDOWN_S = 30.0  # alarm suara terus-menerus, jadi cooldown lebih panjang
+_last_alert_at: dict[tuple[str, str], float] = {}  # (device_id, event_type) -> epoch
 
-# State khusus audio untuk liveness bagian B (sengaja terpisah dari latest_readings milik Lila).
-# Waktu memakai jam SERVER saat klip tiba, bukan timestamp HP, karena jam dua HP bisa selisih beberapa detik.
-AUDIO_KEEP_S = 60.0    # simpan RMS klip tiap HP selama ini
-PEER_MATCH_S = 3.0     # klip HP lain yang tiba dalam +-3 detik dianggap meliput kejadian yang sama
-PEER_ONLINE_S = 30.0   # HP lain dianggap aktif kalau ada klip dalam 30 detik terakhir
-_recent_audio = {}     # device_id -> list[(waktu_tiba, rms)]
+AUDIO_KEEP_S = 60.0    # keep RMS samples per HP for this many seconds
+PEER_MATCH_S = 3.0     # consider another HP's sample if within +-3s
+PEER_ONLINE_S = 30.0   # a HP is online for audio if it sent a sample within this window
+_recent_audio: dict[str, list[tuple[float, float]]] = {}  # device_id -> [(timestamp, rms)]
 
 
-def _remember_audio(device_id: str, now: float, rms: float):
+def _now() -> float:
+    return time.time()
+
+
+def _is_online(last_seen: float, threshold: float = 15.0) -> bool:
+    return (_now() - last_seen) < threshold
+
+
+def _remember_audio(device_id: str, now: float, rms: float) -> None:
     entries = _recent_audio.setdefault(device_id, [])
     entries.append((now, rms))
     while entries and now - entries[0][0] > AUDIO_KEEP_S:
@@ -50,15 +86,16 @@ def _remember_audio(device_id: str, now: float, rms: float):
 
 
 def check_amplitude_liveness(device_id: str, rms: float, now: float):
-    """Liveness bagian B (Bab 5.2.1.1). Return (status, detail):
-    - "tidak_ada_hp_lain": HP lain tidak aktif -> tidak menilai (tidak mengubah keputusan)
-    - "timpang": satu HP jauh lebih keras -> kemungkinan kejadian lokal (kaca asli)
-    - "setara": RMS kedua HP hampir sama -> kemungkinan sumber tersebar (TV)
-    HP lain aktif tapi tidak mengirim klip di sekitar waktu itu = klipnya hening (di bawah gerbang
-    RMS edge), jadi RMS-nya dianggap 0 (sangat pelan -> timpang).
+    """Liveness B – bandingkan RMS HP ini dengan RMS HP lain yang online dalam rentang waktu +-3 detik.
+    Returns (status, detail):
+        "tidak_ada_hp_lain" - HP lain tidak aktif
+        "timpang" - amplitudo berbeda jauh (kemungkinan pecahan kaca lokal nyata)
+        "setara" - amplitudo berimbang (kemungkinan TV / speaker media)
     """
-    active = {d: v for d, v in _recent_audio.items()
-              if d != device_id and v and now - v[-1][0] <= PEER_ONLINE_S}
+    active = {
+        d: v for d, v in _recent_audio.items()
+        if d != device_id and v and now - v[-1][0] <= PEER_ONLINE_S
+    }
     if not active:
         return "tidak_ada_hp_lain", None
     peer, peer_rms = None, -1.0
@@ -69,47 +106,59 @@ def check_amplitude_liveness(device_id: str, rms: float, now: float):
             peer, peer_rms = d, r
     ratio = classify_audio.amplitude_ratio(rms, peer_rms)
     equal = classify_audio.liveness_check_amplitude_ratio(rms, peer_rms)
-    return ("setara" if equal else "timpang"), {"peer": peer, "own_rms": rms, "peer_rms": peer_rms, "ratio": ratio}
+    status = "setara" if equal else "timpang"
+    detail = {"peer": peer, "own_rms": rms, "peer_rms": peer_rms, "ratio": ratio}
+    return status, detail
 
 
-def on_audio_message(client, userdata, msg):
-    payload = json.loads(msg.payload.decode())
-    # clip_b64 puluhan ribu karakter -- jangan ikut dicetak, ringkas saja.
-    summary = {k: v for k, v in payload.items() if k != "clip_b64"}
-    summary["clip_b64"] = f"<{len(payload.get('clip_b64') or '')} chars>"
-    print(f"[audio] {summary}")
+# ---------------------------------------------------------------------------
+# Helper to store incoming reading in the global state & telemetry history
+# ---------------------------------------------------------------------------
+def store_reading(msg, kind: str):
+    """Parse JSON payload and store it in latest_readings and telemetry_history.
+    Returns (device_id, payload) or None on failure.
+    """
+    try:
+        payload = json.loads(msg.payload.decode())
+    except (ValueError, UnicodeDecodeError):
+        print(f"[{kind}] payload not valid JSON, ignored: {msg.payload!r}")
+        return None
+    device_id = payload.get("device_id") or msg.topic.split("/")[-2]
+    now = _now()
+    clean_data = {k: v for k, v in payload.items() if k != "clip_b64"}
+    with _state_lock:
+        latest_readings[device_id] = {"kind": kind, "data": clean_data, "last_seen": now}
+        tele_item = {
+            "timestamp": now,
+            "time_str": _format_time(now),
+            "device_id": device_id,
+            "kind": kind,
+        }
+        if kind == "env":
+            tele_item.update({
+                "gas_ppm_est": payload.get("gas_ppm_est"),
+                "gas_rate_of_rise": payload.get("gas_rate_of_rise"),
+                "temperature_c": payload.get("temperature_c"),
+                "temp_rate_of_rise": payload.get("temp_rate_of_rise"),
+            })
+        elif kind == "audio":
+            tele_item.update({
+                "rms_amplitude": payload.get("rms_amplitude", 0.0),
+                "dominant_freq_hz": payload.get("dominant_freq_hz"),
+            })
+        telemetry_history.append(tele_item)
+    return device_id, payload
 
-    device_id = payload.get("device_id", "unknown")
-    if not payload.get("clip_b64") and any(
-            payload.get(k) is None for k in ("rms_amplitude", "dominant_freq_hz", "duration_s")):
-        # Tanpa klip, classify_audio_clip butuh ketiga fitur ini (lihat shared/messages.py AudioReading).
-        print(f"[audio] payload tidak punya klip dan fiturnya belum lengkap, dilewati: {device_id}")
-        return
 
-    now = time.time()
-    rms = payload.get("rms_amplitude")
-    if rms is not None:
-        _remember_audio(device_id, now, rms)
-
-    # YAMNet utama, rule-based fallback (lihat classify_audio.classify_audio_clip).
-    result = classify_audio.classify_audio_clip(payload)
-    ring = result.get("ring_scores") or {}
-    print(f"[audio] {device_id} -> method={result['method']} glass={result['is_glass_break']} "
-          f"conf={result['confidence']:.2f} alarm={result['is_alarm']}({result.get('alarm_source')}) "
-          f"alarm_conf={result['alarm_confidence']:.2f} clock={result.get('alarm_clock_score', 0.0):.2f} "
-          f"ding={ring.get('Ding', 0.0):.2f} bell={ring.get('Bell', 0.0):.2f} "
-          f"media={result['is_media']}"
-          + (f" (fallback: {result['fallback_reason']})" if result["fallback_reason"] else ""))
-    _save_clip(payload, device_id, result)
-
-    # Dua jenis kejadian audio dengan logika liveness dan cooldown yang sama (jenis alert beda).
-    if result["is_glass_break"]:
-        _emit_audio_alert(client, device_id, "glass_break", result["confidence"], result, rms, now)
-    if result["is_alarm"]:
-        # Alarm yang hanya dikenali dari pola beep (YAMNet tidak yakin) kurang pasti: beep timer/microwave
-        # berpola sama, jadi diberi label "perlu verifikasi" (alert tidak dibuang).
-        extra = ["beep_pattern"] if result.get("alarm_source") == "beep_pattern" else []
-        _emit_audio_alert(client, device_id, "fire_alarm", result["alarm_confidence"], result, rms, now, extra)
+# ---------------------------------------------------------------------------
+# Audio handling (PIC Annis + Integrasi Lila)
+# ---------------------------------------------------------------------------
+def _fallback_glass_break(payload: dict) -> tuple[bool, float, str]:
+    rms = payload.get("rms_amplitude", 0)
+    freq = payload.get("dominant_freq_hz", 0)
+    if freq > 3000 and rms > 0.02:
+        return True, 0.7, "fallback heuristic"
+    return False, 0.0, "fallback heuristic"
 
 
 def _save_clip(payload: dict, device_id: str, result: dict):
@@ -118,78 +167,358 @@ def _save_clip(payload: dict, device_id: str, result: dict):
         return
     try:
         os.makedirs(SAVE_CLIPS_DIR, exist_ok=True)
-        tag = "kaca" if result["is_glass_break"] else ""
-        tag += ("alarm-" + str(result.get("alarm_source"))) if result["is_alarm"] else ""
-        name = (f"{time.strftime('%H%M%S')}_{device_id}_g{result['confidence']:.2f}"
-                f"_a{result['alarm_confidence']:.2f}_{tag or 'none'}.wav")
+        tag = "kaca" if result.get("is_glass_break") else ""
+        if result.get("is_alarm"):
+            tag += ("alarm-" + str(result.get("alarm_source", "")))
+        name = (f"{_format_time(time.time()).replace(':', '')}_{device_id}_g{result.get('confidence', 0.0):.2f}"
+                f"_a{result.get('alarm_confidence', 0.0):.2f}_{tag or 'none'}.wav")
         with open(os.path.join(SAVE_CLIPS_DIR, name), "wb") as f:
             f.write(base64.b64decode(payload["clip_b64"]))
     except Exception as e:
         print(f"[audio] gagal menyimpan klip: {type(e).__name__}: {e}")
 
 
-def _emit_audio_alert(client, device_id: str, base_type: str, confidence: float, result: dict, rms, now: float,
-                      extra_reasons=()):
-    """Liveness A+B lalu cooldown, lalu publish. base_type: "glass_break" | "fire_alarm"."""
+def on_audio_message(client, userdata, msg):
+    payload = json.loads(msg.payload.decode())
+    summary = {k: v for k, v in payload.items() if k != "clip_b64"}
+    summary["clip_b64"] = f"<{len(payload.get('clip_b64') or '')} chars>"
+    print(f"[audio] {summary}")
+
+    device_id = payload.get("device_id", "unknown")
+    if not payload.get("clip_b64") and any(
+        payload.get(k) is None for k in ("rms_amplitude", "dominant_freq_hz", "duration_s")
+    ):
+        print(f"[audio] payload tidak punya klip dan fiturnya belum lengkap, dilewati: {device_id}")
+        return
+
+    now = _now()
+    rms = payload.get("rms_amplitude")
+    if rms is not None:
+        _remember_audio(device_id, now, rms)
+
+    # Store state for dashboard
+    clean_data = {k: v for k, v in payload.items() if k != "clip_b64"}
+    with _state_lock:
+        latest_readings[device_id] = {"kind": "audio", "data": clean_data, "last_seen": now}
+        telemetry_history.append({
+            "timestamp": now,
+            "time_str": _format_time(now),
+            "device_id": device_id,
+            "kind": "audio",
+            "rms_amplitude": rms if rms is not None else 0.0,
+            "dominant_freq_hz": payload.get("dominant_freq_hz"),
+        })
+
+    # Primary classification (YAMNet) with fallback to rule-based
+    try:
+        result = classify_audio.classify_audio_clip(payload)
+    except NotImplementedError:
+        broken, confidence, reason = _fallback_glass_break(payload)
+        result = {
+            "method": "fallback",
+            "is_glass_break": broken,
+            "confidence": confidence,
+            "fallback_reason": reason,
+            "is_alarm": False,
+            "alarm_confidence": 0.0,
+            "is_media": False,
+            "alarm_source": None,
+        }
+    except Exception as e:
+        print(f"[audio] classification error: {e}")
+        return
+
+    ring = result.get("ring_scores") or {}
+    print(
+        f"[audio] {device_id} -> method={result['method']} glass={result['is_glass_break']} "
+        f"conf={result['confidence']:.2f} alarm={result['is_alarm']}({result.get('alarm_source')}) "
+        f"alarm_conf={result['alarm_confidence']:.2f} clock={result.get('alarm_clock_score', 0.0):.2f} "
+        f"ding={ring.get('Ding', 0.0):.2f} bell={ring.get('Bell', 0.0):.2f} "
+        f"media={result['is_media']}"
+        + (f" (fallback: {result['fallback_reason']})" if result.get("fallback_reason") else "")
+    )
+    _save_clip(payload, device_id, result)
+
+    if result["is_glass_break"]:
+        _emit_audio_alert(client, device_id, "glass_break", result["confidence"], result, rms, now)
+    if result["is_alarm"]:
+        extra = ["beep_pattern"] if result.get("alarm_source") == "beep_pattern" else []
+        _emit_audio_alert(client, device_id, "fire_alarm", result["alarm_confidence"], result, rms, now, extra)
+
+
+def _emit_audio_alert(
+    client,
+    device_id: str,
+    base_type: str,
+    confidence: float,
+    result: dict,
+    rms,
+    now: float,
+    extra_reasons=(),
+):
+    """Combine liveness A (media context) and B (RMS ratio) then publish.
+    base_type is "glass_break" or "fire_alarm".
+    """
     reasons = list(extra_reasons)
-    # Bagian A liveness: terindikasi TV/media di klip yang sama -> "perlu verifikasi" (Bab 5.2.1.1).
     if result["is_media"]:
         reasons.append("media_context")
-    # Bagian B liveness: RMS kedua HP hampir sama -> kemungkinan sumber tersebar seperti TV.
-    # Ambang belum dikalibrasi; kegagalannya aman (hanya label, alert tidak dibuang).
+
     status, detail = check_amplitude_liveness(device_id, rms if rms is not None else 0.0, now)
     if status != "tidak_ada_hp_lain":
-        print(f"[liveness-B] {device_id} rms={detail['own_rms']:.4f} {detail['peer']} rms={detail['peer_rms']:.4f} "
-              f"rasio={detail['ratio']:.2f} (batas setara < {classify_audio.AMPLITUDE_RATIO_EQUAL_MAX}) -> {status}")
+        print(
+            f"[liveness-B] {device_id} rms={detail['own_rms']:.4f} {detail['peer']} rms={detail['peer_rms']:.4f} "
+            f"ratio={detail['ratio']:.2f} (threshold < {classify_audio.AMPLITUDE_RATIO_EQUAL_MAX}) -> {status}"
+        )
     if status == "setara":
         reasons.append("amplitude_equal")
     event_type = f"{base_type}_needs_verification" if reasons else base_type
-    # Satu pecahan kaca biasanya menyebar ke 2-3 klip berurutan (lihat uji kaca4-8.m4a), dan alarm
-    # berbunyi terus -- jangan kirim alert berulang untuk kejadian yang sama.
     cooldown = ALARM_COOLDOWN_S if base_type == "fire_alarm" else ALERT_COOLDOWN_S
     key = (device_id, event_type)
     since = now - _last_alert_at.get(key, 0.0)
     if since < cooldown:
-        print(f"[audio] {device_id} {event_type} diredam (cooldown, {since:.1f}s < {cooldown:.0f}s)")
+        print(f"[audio] {device_id} {event_type} suppressed (cooldown {since:.1f}s < {cooldown}s)")
         return
     _last_alert_at[key] = now
-    publish_alert(client, event_type=event_type, confidence=confidence,
-                  source=device_id, reason=",".join(reasons) or None)
+    level = "VERIFY" if reasons else "ALERT"
+    publish_alert(
+        client,
+        event_type=event_type,
+        confidence=confidence,
+        source=device_id,
+        reason=",".join(reasons) or None,
+        level=level,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Environment handling (PIC Binar + Integrasi Lila)
+# ---------------------------------------------------------------------------
+def _fallback_fire(payload: dict) -> tuple[bool, float, str]:
+    gas = payload.get("gas_rate_of_rise", 0)
+    temp = payload.get("temp_rate_of_rise", 0)
+    if gas > 0.5 and temp > 2:
+        return True, 0.7, "fallback heuristic"
+    return False, 0.0, "fallback heuristic"
 
 
 def on_env_message(client, userdata, msg):
-    payload = json.loads(msg.payload.decode())
-    print(f"[env] {payload}")
-    # TODO: panggil classify_fire.classify_fire(...) dan estimate_source_location(...),
-    # lalu publish AlertMessage kalau lolos.
+    result = store_reading(msg, "env")
+    if result is None:
+        return
+    device_id, payload = result
+    print(f"[env] {device_id}: {payload}")
+
+    gas_rate = payload.get("gas_rate_of_rise", 0.0)
+    temp_rate = payload.get("temp_rate_of_rise", 0.0)
+
+    try:
+        res = classify_fire.classify_fire(gas_rate, temp_rate)
+        if isinstance(res, dict):
+            fire = res.get("is_fire", False)
+            confidence = res.get("confidence", 0.0)
+            reason = "gas_temp_rate_of_rise" if fire else "threshold_not_met"
+        elif isinstance(res, (tuple, list)):
+            fire = res[0]
+            confidence = res[1] if len(res) > 1 else 0.0
+            reason = res[2] if len(res) > 2 else "gas_temp_rate_of_rise"
+        else:
+            fire, confidence, reason = bool(res), 0.5, "gas_temp_rate_of_rise"
+    except NotImplementedError:
+        fire, confidence, reason = _fallback_fire(payload)
+    except Exception as e:
+        print(f"[env] classification error: {e}")
+        return
+
+    if not fire:
+        return
+
+    now = _now()
+    with _state_lock:
+        last = _fire_candidate.get(device_id)
+        if last and (now - last) <= 10.0:
+            level = "ALERT"
+            _fire_candidate.pop(device_id, None)
+        else:
+            _fire_candidate[device_id] = now
+            level = "VERIFY"
+
+    # Estimasi lokasi sumber menggunakan fungsi Binar
+    location_hint = device_id
+    try:
+        with _state_lock:
+            env_readings = {
+                d: info["data"] for d, info in latest_readings.items()
+                if info.get("kind") == "env" and isinstance(info.get("data"), dict)
+            }
+        estimated = classify_fire.estimate_source_location(env_readings)
+        if estimated and estimated != "belum_diketahui":
+            location_hint = estimated
+    except Exception as e:
+        print(f"[env] estimate location error: {e}")
+
+    # Cooldown 20 detik per device & level agar tidak banjir alert
+    key = (device_id, "fire_smoke", level)
+    with _state_lock:
+        last_pub = _last_alert_time.get(key, 0.0)
+        if now - last_pub < 20.0:
+            print(f"[env] {device_id} fire_smoke suppressed (cooldown {now - last_pub:.1f}s < 20s)")
+            return
+        _last_alert_time[key] = now
+
+    event_type = "fire_smoke" if level == "ALERT" else "fire_smoke_needs_verification"
+    publish_alert(
+        client,
+        event_type=event_type,
+        confidence=confidence,
+        location_hint=location_hint,
+        source=device_id,
+        reason=reason,
+        level=level,
+    )
 
 
-def publish_alert(client, event_type: str, confidence: float, location_hint: str = None,
-                  source: str = None, reason: str = None):
-    alert = AlertMessage(event_type=event_type, confidence=confidence,
-                          location_hint=location_hint, source=source, reason=reason)
+# ---------------------------------------------------------------------------
+# Alert publishing & history tracking
+# ---------------------------------------------------------------------------
+def publish_alert(
+    client,
+    event_type: str,
+    confidence: float,
+    location_hint: str = None,
+    source: str = None,
+    reason: str = None,
+    level: str = None,
+):
+    if level is None:
+        if "needs_verification" in event_type:
+            level = "VERIFY"
+        elif event_type == "normal":
+            level = "NORMAL"
+        else:
+            level = "ALERT"
+
+    now = _now()
+    alert = AlertMessage(
+        event_type=event_type,
+        confidence=confidence,
+        location_hint=location_hint,
+        source=source,
+        reason=reason,
+    )
     client.publish(topic("alerts"), json.dumps(alert.to_dict()), retain=True)
-    print(f"[ALERT] {alert.to_dict()}")
+    with _state_lock:
+        event_history.append(
+            {
+                "timestamp": now,
+                "event_type": event_type,
+                "confidence": confidence,
+                "location_hint": location_hint,
+                "source": source,
+                "level": level,
+                "reason": reason or "auto",
+            }
+        )
+    print(f"[ALERT] {alert.to_dict()} level={level}")
 
 
+# ---------------------------------------------------------------------------
+# Flask dashboard API (PIC Lila)
+# ---------------------------------------------------------------------------
+def create_flask_app():
+    from flask import Flask, jsonify, send_from_directory
+
+    static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dashboard"))
+    app = Flask(__name__, static_folder=static_dir)
+
+    @app.route("/")
+    def root():
+        return send_from_directory(app.static_folder, "index.html")
+
+    @app.route("/<path:path>")
+    def static_files(path):
+        return send_from_directory(app.static_folder, path)
+
+    @app.route("/api/state")
+    def api_state():
+        with _state_lock:
+            state = {}
+            for dev, info in latest_readings.items():
+                data = info["data"].copy()
+                data["online"] = _is_online(info["last_seen"])
+                state[dev] = {
+                    "kind": info["kind"],
+                    "data": data,
+                    "last_seen": info["last_seen"],
+                }
+            now = _now()
+            overall = "NORMAL"
+            for ev in list(event_history)[-20:]:
+                if now - ev["timestamp"] < 30:
+                    if ev["level"] == "ALERT":
+                        overall = "ALERT"
+                        break
+                    elif ev["level"] == "VERIFY":
+                        overall = "VERIFY"
+        return jsonify({"devices": state, "overall": overall, "timestamp": now})
+
+    @app.route("/api/events")
+    def api_events():
+        with _state_lock:
+            raw_events = list(event_history)[::-1]
+        events = []
+        for ev in raw_events:
+            item = ev.copy()
+            ts = item.get("timestamp", 0)
+            if isinstance(ts, (int, float)):
+                item["time_str"] = _format_datetime(ts)
+            else:
+                item["time_str"] = str(ts)
+            events.append(item)
+        return jsonify(events)
+
+    @app.route("/api/telemetry")
+    def api_telemetry():
+        with _state_lock:
+            items = list(telemetry_history)[-100:]
+        return jsonify(items)
+
+    return app
+
+
+def _run_flask():
+    app = create_flask_app()
+    # Host on 0.0.0.0 so devices on the same WiFi/hotspot can access the dashboard
+    app.run(host="0.0.0.0", port=8000, debug=False, use_reloader=False)
+
+
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    print(f"[MQTT] connect: {reason_code}")
+    client.subscribe(topic("edge/+/audio"))
+    client.subscribe(topic("edge/+/env"))
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 def main():
-    client = create_client(role="processing-server")
-    client.on_message = None  # set per-topic callback lewat message_callback_add
+    # Start Flask dashboard in background daemon thread
+    flask_thread = threading.Thread(target=_run_flask, daemon=True)
+    flask_thread.start()
+    print("Dashboard web server berjalan di http://0.0.0.0:8000 (akses via localhost:8000)")
 
+    client = create_client(role="processing-server")
+    client.on_connect = on_connect
+    client.on_message = None  # callbacks set via message_callback_add
     client.message_callback_add(topic("edge/+/audio"), on_audio_message)
     client.message_callback_add(topic("edge/+/env"), on_env_message)
     client.subscribe(topic("edge/+/audio"))
     client.subscribe(topic("edge/+/env"))
-
     client.loop_start()
     print("Processing server jalan, subscribe ke semua topic edge...")
 
-    # TODO (Lila): start dashboard web server di sini (Flask, port 8000)
-    # dari folder ../dashboard/
-
     try:
         while True:
-            time.sleep(1)  # loop MQTT jalan di thread lain (loop_start()), ini cuma nahan proses hidup
+            time.sleep(1)
     except KeyboardInterrupt:
         print("Berhenti.")
     finally:
