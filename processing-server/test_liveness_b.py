@@ -97,6 +97,49 @@ ok7 = got == [("glass_break_needs_verification", "media_context,amplitude_equal"
 print(("OK   " if ok7 else "GAGAL"), "7. media + setara (dua alasan)", "->", got)
 results.append(ok7)
 
+def alarm_result(media=False, source="yamnet"):
+    return {"is_glass_break": False, "confidence": 0.0, "is_alarm": True, "alarm_confidence": 0.9,
+            "alarm_source": source, "method": "yamnet", "is_media": media, "fallback_reason": None}
+
+
+# 8-11. Alarm asap: logika liveness sama dengan kaca, jenis alert fire_alarm, cooldown 30 detik.
+orig_classify = server.classify_audio.classify_audio_clip
+quiet = {**alarm_result(), "is_alarm": False, "alarm_confidence": 0.0, "alarm_source": None}
+# Hanya HP A yang "mendengar" alarm; klip HP lain dianggap bukan alarm (cuma jadi pembanding RMS).
+server.classify_audio.classify_audio_clip = lambda payload: alarm_result() if payload["device_id"] == "hpA" else quiet
+ft, c = fresh()
+send(ft, c, 100, clip("hpA", 0.03, False))
+got = [(a["event_type"], a["reason"]) for a in c.published]
+ok8 = got == [("fire_alarm", None)]
+print(("OK   " if ok8 else "GAGAL"), "8. alarm, hanya HP A", "->", got)
+results.append(ok8)
+
+ft, c = fresh()
+send(ft, c, 100, clip("hpB", 0.020, False))
+send(ft, c, 101, clip("hpA", 0.021, False))
+got = [(a["event_type"], a["reason"]) for a in c.published]
+ok9 = got == [("fire_alarm_needs_verification", "amplitude_equal")]
+print(("OK   " if ok9 else "GAGAL"), "9. alarm, RMS dua HP setara", "->", got)
+results.append(ok9)
+
+ft, c = fresh()
+send(ft, c, 100, clip("hpA", 0.03, False))
+send(ft, c, 115, clip("hpA", 0.03, False))   # 15 dtk: kaca sudah lewat cooldown 10, alarm belum (30)
+send(ft, c, 135, clip("hpA", 0.03, False))   # 35 dtk sejak alert pertama: lolos lagi
+got = [a["event_type"] for a in c.published]
+ok10 = got == ["fire_alarm", "fire_alarm"]
+print(("OK   " if ok10 else "GAGAL"), "10. cooldown alarm 30 detik", "->", got)
+results.append(ok10)
+# 11. Alarm yang hanya dikenali dari pola beep (YAMNet tidak yakin) -> perlu verifikasi.
+server.classify_audio.classify_audio_clip = lambda payload: alarm_result(source="beep_pattern")
+ft, c = fresh()
+send(ft, c, 100, clip("hpA", 0.03, False))
+got = [(a["event_type"], a["reason"]) for a in c.published]
+ok11 = got == [("fire_alarm_needs_verification", "beep_pattern")]
+print(("OK   " if ok11 else "GAGAL"), "11. alarm hanya dari pola beep", "->", got)
+results.append(ok11)
+server.classify_audio.classify_audio_clip = orig_classify
+
 print()
 print(f"{sum(results)}/{len(results)} skenario lolos")
 sys.exit(0 if all(results) else 1)

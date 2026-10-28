@@ -162,6 +162,8 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 
 **Audio:** Cek pola bunyi berulang periodik dengan frekuensi relatif konstan (ciri khas bunyi alarm), atau gunakan YAMNet dengan kelas Fire alarm, Smoke detector smoke alarm, Alarm, Buzzer.
 
+*Implementasi (diperbarui):* dua jalur pada klip audio yang sama dengan jalur kaca. (1) YAMNet: hanya kelas Fire alarm dan Smoke detector/smoke alarm yang dipakai (Alarm dan Buzzer ditinggalkan karena terlalu umum: jam weker, bel microwave, klakson). Berbeda dengan kaca yang transient, alarm berbunyi terus-menerus, sehingga yang dinilai adalah skor frame tertinggi KEDUA (bunyi bertahan minimal 2 frame YAMNet), ambang 0,35. (2) Pola beep, hanya diperiksa bila YAMNet tidak yakin: alarm dari merek berbeda nadanya berbeda (sampel uji 1,1-6 kHz) tetapi polanya sama, yaitu beep 0,3-1,2 detik berisi satu nada stabil, berulang dengan nada dan durasi yang sama. Detektor ini (numpy saja, tanpa TensorFlow, sehingga tetap jalan di jalur cadangan) mencari segmen beep dari envelope RMS, memeriksa nadanya lewat FFT, lalu menghitung beep bernada sama (selisih maksimal 5%, durasi selisih maksimal 30%): terdeteksi bila ada dua beep lengkap bernada sama, atau tiga beep termasuk potongan di tepi klip. Alarm yang hanya dikenali lewat pola beep (YAMNet tidak yakin) diberi label `fire_alarm_needs_verification` dengan alasan `beep_pattern`, karena beep timer atau microwave berpola sama. Logika liveness check (bagian A dan B) dan cooldown sama dengan kaca; jenis alert `fire_alarm` / `fire_alarm_needs_verification`, cooldown 30 detik (alarm berbunyi terus). Dua penyesuaian dari uji lewat mikrofon HP: pola beep hanya menerima nada 800 Hz ke atas (bicara dan dengung bernada rendah sempat lolos sebagai beep), dan pola beep dibatalkan bila YAMNet membaca klip sebagai "Alarm clock" (skor di atas 0,5), karena timer dapur dan jam weker berbunyi berulang tetapi bukan alarm asap. Hasil pengujian ada di Bab 9.1.
+
 **Gas & suhu:** Logika korelasi: ALERT hanya dipicu bila rate-of-rise gas DAN rate-of-rise suhu sama-sama melewati ambang dalam rentang waktu yang sama. Jika gas naik namun suhu stabil, kemungkinan asap berasal dari luar dan tidak langsung dianggap ALERT (lihat Bab 8).
 
 **Lokasi sumber:** Dengan dua titik ESP32 (dapur dan kamar), node dengan kadar gas tertinggi/kenaikan tercepat dianggap sebagai perkiraan lokasi sumber asap (pendekatan sederhana berbasis perbandingan nilai antarnode, bukan triangulasi presisi).
@@ -229,6 +231,12 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Label "perlu verifikasi" belum tampil di dashboard karena dashboard belum dibuat.
 
+- Bunyi berdering atau berdenting bernada tinggi (bel, lonceng, nada EAS, denting) bisa terbaca YAMNet sebagai kaca lewat mikrofon HP. Pembeda yang dicoba (kemurnian nada, peringkat kelas kaca di frame puncak, skor kelas Ding dan Bell, embedding YAMNet) tidak memisahkan dengan andal; skor Bell bahkan mencapai 0,99 pada klip kaca yang benar. Embedding hanya memberi sinyal tipis dengan data sangat terbatas dan tidak dipakai.
+
+- Deteksi alarm asap lewat mikrofon HP banyak bergantung pada pola beep: YAMNet hanya mengenali satu dari empat sampel alarm (skornya turun dari 0,85 ke atas secara offline menjadi 0,00-0,16 pada alarm sekolah), dan pola beep hanya menandai sekitar 41% klip yang bernada alarm. Penyebab yang teramati: hanya satu beep penuh di dalam jendela 3 detik, suara keras non-beep menaikkan acuan puncak, dan beep terpecah oleh gema. Per kejadian keempat alarm terdeteksi, tetapi tiga di antaranya berlabel perlu verifikasi.
+
+- Cooldown alarm 30 detik per HP berarti alarm kedua yang bunyinya berbeda dan berbunyi dalam 30 detik setelah alert alarm sebelumnya tidak menghasilkan alert baru.
+
 # 9. Rencana Pengujian
 
 Pengujian mencakup skenario positif (event harus terdeteksi) dan skenario negatif (event serupa yang seharusnya tidak memicu ALERT), supaya hasil demo dan laporan lebih kredibel.
@@ -248,15 +256,18 @@ Pengujian mencakup skenario positif (event harus terdeteksi) dan skenario negati
 
 ## 9.1 Hasil Pengujian dan Kalibrasi Awal Jalur Audio (diperbarui)
 
-Metode: rekaman mikrofon HP asli (Termux, 16 kHz) untuk sampel yang diputar lewat speaker laptop, lalu dinilai YAMNet di laptop. Hasil di bawah menyangkut jalur audio saja dan berasal dari sampel terbatas.
+Metode: rekaman mikrofon HP asli (Termux, 16 kHz) untuk sampel yang diputar lewat speaker laptop, lalu dinilai YAMNet di laptop. Hasil di bawah menyangkut jalur audio saja dan berasal dari sampel terbatas. Hasil dilaporkan dalam dua pandangan: per kejadian (yang dilihat pengguna, yaitu alert yang tampil setelah cooldown dan label verifikasi) dan per klip (kepekaan detektor terhadap tiap klip 3 detik). Pandangan per kejadian menyembunyikan klip yang terlewat, sehingga kepekaan per klip dicatat terpisah. Label per klip untuk bunyi alarm berasal dari frekuensi dominan klip (perkiraan), belum dikonfirmasi satu per satu dengan pendengaran.
 
 | **No** | **Skenario (Bab 9)** | **Status** | **Hasil sejauh ini** |
 |--------|----------------------|------------|----------------------|
-| 1 | Gelas kaca dijatuhkan di dekat HP A | Belum dengan gelas sungguhan | Sampel kaca lewat speaker: pada satu uji 94 detik terkirim 4 alert (skor 0,47-0,76); pada uji lain 9 alert dalam sekitar 220 detik (0,37-0,83), dan sebagian klip kaca tidak lolos karena skornya 0,2-0,34 |
+| 1 | Gelas kaca dijatuhkan di dekat HP A | Belum dengan gelas sungguhan | Sampel kaca lewat speaker: pada satu uji 94 detik terkirim 4 alert (skor 0,47-0,76); pada uji lain 9 alert dalam sekitar 220 detik (0,37-0,83), dan sebagian klip kaca tidak lolos karena skornya 0,2-0,34. Sesi terakhir (113 klip, satu HP): 23 klip ditandai kaca (skor 0,37-0,98, median 0,64); dari 12 kandidat kejadian 11 terdeteksi (14 alert setelah cooldown 10 detik), 2 klip berlabel perlu verifikasi karena konteks media; jumlah sampel yang diputar tidak tercatat sehingga angka ini batas atas |
 | 2 | Hewan menyenggol benda kaca | Belum | - |
 | 3 | Suara keras lain (pintu dibanting, buku jatuh) | Sebagian | Pintu dibanting (dua jenis), musik, bicara, tawa, bising ruangan, suara memasak, dan TV static: rekaman offline skor kaca maksimal 0,18; uji live sekitar 62 klip (122 detik) tidak ada yang ditandai kaca, skor maksimal 0,08. Buku jatuh, kunci, dan koin belum diuji |
 | 4 | Kaca di TV dengan dialog/musik | Sebagian | Hanya simulasi offline (Bab 5.2.1.1); belum lewat mikrofon HP |
 | 5 | Rasio amplitudo dua HP | Logika selesai, kalibrasi belum | Server sudah membandingkan RMS dua HP (7 skenario simulasi lolos); ambang rasio 1,5 belum dikalibrasi dengan dua HP sungguhan |
+| - | Bunyi alarm asap (Bab 5.2.2, audio) | Lewat mikrofon HP (sampel via speaker) | Per kejadian: 4 dari 4 alarm terdeteksi 0-10 detik setelah mulai (fire-alarm-33770 langsung lewat YAMNet; alarm sekolah dan nada EAS +4 detik, bel 6708 +10 detik, ketiganya lewat pola beep dan berlabel perlu verifikasi). Per klip: dari 44 klip yang bernada alarm, 18 ditandai (41%); dari 211 klip mikrofon lain tidak ada yang ditandai alarm. Sebelum lewat mikrofon (offline, klip bersih) 7/7, 30/31, 4/4, 2/14 jendela |
+| - | Bunyi dering rumah tangga (bel pintu, timer dapur) | Lewat mikrofon HP (sampel via speaker) | Tidak ada alert. Pembatalan Alarm clock membuang 1 klip timer yang salah, tetapi juga 1 klip nada EAS yang benar (skor Alarm clock 0,54, tepat di ambang 0,5) |
+| - | Bunyi berdering/berdenting vs kaca (bel, lonceng, nada EAS, denting microwave) | Kelemahan terbuka | Enam klip salah ditandai kaca dalam satu sesi (bel 6708 empat klip, skor 0,35-0,85; awal nada EAS 0,49; satu lonceng tak teridentifikasi 0,39). Denting microwave offline juga 0,86. Belum ada pembeda andal (lihat Bab 8) |
 | 10 | Latensi notifikasi | Belum | - |
 
 Parameter yang berubah selama kalibrasi:
@@ -270,6 +281,9 @@ Parameter yang berubah selama kalibrasi:
 | Skor antar-frame | Rata-rata | Maksimum | Kejadian transient hanya 1-2 frame |
 | Bentuk klip | Window 2 detik, rekam-berhenti-ulang (jeda 1,3-2,5 detik) | Klip 3 detik tiap 2 detik dari rekaman kontinu | Kejadian di jeda tidak terekam, yang di batas window terpotong |
 | Rotasi file rekaman | Tiap 60 detik (HP tidak mendengar sekitar 9 detik tiap 64 detik) | Tiap 30 menit | Seluruh file tidak lagi di-decode tiap detik |
+| Ambang YAMNet alarm | - | 0,35 pada skor frame tertinggi kedua kelas Fire alarm dan Smoke detector | Alarm berbunyi terus; satu bunyi sesaat tidak cukup |
+| Pola beep | - | 2 beep penuh bernada sama (selisih 5%, durasi 30%) atau 3 termasuk potongan; nada 800 Hz ke atas | Mengenali alarm yang tidak dikenali YAMNet (EAS, bel); bicara dan dengung rendah sempat lolos |
+| Pembatalan Alarm clock | - | Pola beep dibatalkan bila skor Alarm clock di atas 0,5 | Timer dapur dan jam weker berpola beep tetapi bukan alarm asap; offline 0,96-0,99 vs alarm asap 0,00-0,14, lewat mikrofon HP timer 0,4-0,8 |
 
 Sampel kaca terpendek (sekitar 1,3 detik) paling mudah terlewat: skornya turun dari 0,89 menjadi 0,29 ketika volume putar diturunkan ke sekitar 12% (simulasi dengan bising mikrofon HP).
 

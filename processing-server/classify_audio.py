@@ -65,6 +65,41 @@ YAMNET_CONFIDENCE_THRESHOLD = 0.35
 # Skor konteks TV/Speech/Music (rata-rata sepanjang klip) di atas ini -> dianggap media.
 MEDIA_CONTEXT_THRESHOLD = 0.3
 
+# Alarm asap (Bab 5.2.2). "Alarm" dan "Buzzer" SENGAJA tidak dipakai: terlalu umum (jam weker,
+# bel microwave, klakson) dan bunyi beep kecil rumah tangga akan ikut memicu.
+ALARM_CLASS_NAMES = {"Fire alarm", "Smoke detector, smoke alarm"}
+# Berbeda dengan kaca (transient, cukup satu frame), alarm berbunyi terus-menerus, jadi yang dinilai
+# adalah skor frame TERTINGGI KEDUA (butuh minimal 2 frame YAMNet di atas ambang): satu "ting" sesaat
+# tidak cukup. 0.35: di edge-audio/samples2/ alarm "Fire alarm" skornya 0.4-1.0, sedangkan seluruh
+# rekaman kaca dan negatif (samples/, samples1/) tidak pernah di atas 0.03. Dua dari empat sampel
+# (bel bergaya musik, nada EAS) memang tidak dikenali YAMNet sebagai alarm. Perlu divalidasi lewat mic HP
+# dan dengan bunyi beep rumah tangga (microwave, jam weker, bel pintu) yang belum ada di set uji.
+ALARM_CONFIDENCE_THRESHOLD = 0.35
+
+# Alarm rumah tangga (timer dapur, jam weker) juga berbunyi berulang, tapi bukan alarm asap. YAMNet
+# mengenalinya sebagai "Alarm clock": di sampel uji skornya 0.96-0.99, sedangkan alarm asap beneran
+# 0.00-0.14 (selisih lebar). Kalau skor ini tinggi, pola beep TIDAK dipakai. Telephone bell dan Doorbell
+# sengaja tidak dipakai: alarm sekolah dan nada EAS pun menyentuh 0.75 / 0.58 di kelas itu.
+RING_DIAG_CLASS_NAMES = ("Ding", "Bell")
+HOUSEHOLD_ALARM_CLASS = "Alarm clock"
+HOUSEHOLD_ALARM_THRESHOLD = 0.5
+
+# Kepercayaan tetap untuk alarm yang hanya dikenali dari pola beep (tidak ada skor model).
+BEEP_ONLY_CONFIDENCE = 0.5
+
+# Jalur kedua untuk alarm: POLA BEEP (Bab 5.2.2: "pola bunyi berulang dengan frekuensi konstan").
+# Alarm dari merek/model berbeda nadanya beda (1-6 kHz) tapi polanya sama: beep 0.3-1.2 detik berisi
+# satu nada murni, berulang dengan nada dan durasi yang sama. YAMNet menilai "jenis suara", jadi sebagian
+# alarm (bel bergaya musik, nada EAS) lolos darinya; pola ini tidak peduli nadanya.
+BEEP_FRAME_S = 0.02
+BEEP_ON_FRACTION = 0.25     # beep = envelope di atas 25% puncak klip
+BEEP_MIN_S, BEEP_MAX_S = 0.3, 1.2
+BEEP_EDGE_MIN_S = 0.15     # potongan beep di tepi klip
+BEEP_MIN_HZ = 800.0         # nada beep alarm/timer 1-6 kHz; suara bicara/dengung (< 800 Hz) bukan beep
+BEEP_TONAL_MIN = 0.2        # >= 20% energi (di atas 300 Hz) di sekitar satu puncak; alarm EAS kaya harmonik (0.27)
+BEEP_FREQ_TOL = 0.05        # dua beep dianggap "nada sama" bila selisih <= 5%
+BEEP_DUR_TOL = 0.3          # dan durasi selisih <= 30%
+
 # Fallback rule-based (dipakai kalau YAMNet tidak tersedia / gagal).
 HF_RATIO_THRESHOLD = 0.5  # hasil simulasi awal di sampel publik, perlu kalibrasi rekaman HP
 
@@ -97,7 +132,11 @@ def analyze_yamnet(waveform) -> dict:
     Skor kaca = max antar-frame (event transient cuma menempati 1-2 frame,
     rata-rata akan meredamnya), diambil dari kelas-kelas GLASS_BREAK_CLASS_NAMES.
     Skor konteks media = rata-rata antar-frame (TV/dialog/musik berlangsung terus).
-    Return {"glass_score": float, "media_scores": {nama: float}}.
+    Skor alarm = skor frame tertinggi KEDUA dari kelas ALARM_CLASS_NAMES (bunyi harus bertahan
+    minimal 2 frame; kalau klip cuma 1 frame, dipakai yang tertinggi).
+    alarm_clock_score = skor frame tertinggi kelas "Alarm clock" (jam weker/timer dapur), dipakai untuk
+    membatalkan pola beep.
+    Return {"glass_score": float, "alarm_score": float, "alarm_clock_score": float, "media_scores": {nama: float}}.
     """
     model, class_names = _load_yamnet()
     scores, _embeddings, _spectrogram = model(waveform)
@@ -105,7 +144,14 @@ def analyze_yamnet(waveform) -> dict:
 
     glass_score = max(float(scores[:, class_names.index(n)].max()) for n in GLASS_BREAK_CLASS_NAMES)
     media_scores = {n: float(scores[:, class_names.index(n)].mean()) for n in MEDIA_CLASS_NAMES}
-    return {"glass_score": glass_score, "media_scores": media_scores}
+    alarm_cols = [class_names.index(n) for n in ALARM_CLASS_NAMES]
+    alarm_frames = sorted(scores[:, alarm_cols].max(axis=1), reverse=True)
+    alarm_score = float(alarm_frames[1] if len(alarm_frames) >= 2 else alarm_frames[0])
+    alarm_clock_score = float(scores[:, class_names.index(HOUSEHOLD_ALARM_CLASS)].max())
+    # Hanya diagnostik (tidak dipakai keputusan): bunyi denting/lonceng sering terbaca kaca (Chink, clink).
+    ring_scores = {n: float(scores[:, class_names.index(n)].max()) for n in RING_DIAG_CLASS_NAMES}
+    return {"glass_score": glass_score, "alarm_score": alarm_score, "alarm_clock_score": alarm_clock_score,
+            "ring_scores": ring_scores, "media_scores": media_scores}
 
 
 def classify_glass_break_yamnet(audio_clip_path: str) -> dict:
@@ -124,6 +170,66 @@ def classify_glass_break_yamnet(audio_clip_path: str) -> dict:
         )
     glass_score = analyze_yamnet(waveform)["glass_score"]
     return {"is_glass_break": glass_score > YAMNET_CONFIDENCE_THRESHOLD, "confidence": glass_score}
+
+
+def detect_beep_train(waveform, sample_rate: int = 16000) -> dict:
+    """Deteksi rangkaian beep berulang dengan nada stabil (alarm asap; beep timer dan bel elektronik juga ikut).
+
+    Segmen "nyala" dari envelope RMS 20 ms; segmen yang menyentuh tepi klip dianggap terpotong (hanya bukti pendukung).
+    Tiap segmen diperiksa nadanya (FFT); beep yang nadanya (dan durasinya) sama dikelompokkan.
+    Terdeteksi bila ada 2 beep lengkap bernada sama, atau 3 beep bernada sama termasuk potongan di tepi klip.
+    Return {"is_beep_train": bool, "n_beeps": int, "freq_hz": float|None}.
+    """
+    import numpy as np
+
+    x = np.asarray(waveform, dtype=np.float64)
+    h = int(BEEP_FRAME_S * sample_rate)
+    n = len(x) // h
+    if n < 10:
+        return {"is_beep_train": False, "n_beeps": 0, "freq_hz": None}
+    env = np.sqrt((x[: n * h].reshape(n, h) ** 2).mean(axis=1))
+    if env.max() <= 0:
+        return {"is_beep_train": False, "n_beeps": 0, "freq_hz": None}
+    on = env > BEEP_ON_FRACTION * env.max()
+
+    beeps = []  # (freq, durasi, terpotong_tepi)
+    i = 0
+    while i < n:
+        if not on[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and on[j]:
+            j += 1
+        dur = (j - i) * BEEP_FRAME_S
+        edge = i == 0 or j == n
+        # Beep lengkap: BEEP_MIN_S..BEEP_MAX_S. Potongan di tepi klip: cukup >= BEEP_EDGE_MIN_S, hanya
+        # jadi bukti pendukung (nada sama dengan beep lengkap). Nada terus-menerus (siren, dengung)
+        # bukan rangkaian beep, jadi segmen yang lebih panjang dari BEEP_MAX_S dibuang.
+        if dur <= BEEP_MAX_S and dur >= (BEEP_EDGE_MIN_S if edge else BEEP_MIN_S):
+            seg = x[i * h:j * h]
+            power = np.abs(np.fft.rfft(seg * np.hanning(len(seg)))) ** 2
+            freqs = np.fft.rfftfreq(len(seg), 1.0 / sample_rate)
+            m = freqs > 300.0
+            if power[m].sum() > 0:
+                f_pk = freqs[m][power[m].argmax()]
+                near = m & (np.abs(freqs - f_pk) <= 0.04 * f_pk)
+                if f_pk >= BEEP_MIN_HZ and power[near].sum() / power[m].sum() >= BEEP_TONAL_MIN:
+                    beeps.append((float(f_pk), dur, edge))
+        i = j
+
+    full = [b for b in beeps if not b[2]]
+    cut = [b for b in beeps if b[2]]
+    best, best_f = 0, None
+    for a in full:
+        same_full = [b for b in full if b is not a
+                     and abs(b[0] - a[0]) <= BEEP_FREQ_TOL * a[0] and abs(b[1] - a[1]) <= BEEP_DUR_TOL * a[1]]
+        same_edge = [b for b in cut if abs(b[0] - a[0]) <= BEEP_FREQ_TOL * a[0]]
+        total = 1 + len(same_full) + len(same_edge)
+        # Dua beep lengkap bernada sama, atau tiga beep (termasuk potongan di tepi klip).
+        if (1 + len(same_full) >= 2 or total >= 3) and total > best:
+            best, best_f = total, a[0]
+    return {"is_beep_train": best >= 2, "n_beeps": best, "freq_hz": best_f}
 
 
 def decode_clip(clip_b64: str, expected_rate: int = 16000):
@@ -161,32 +267,53 @@ def classify_audio_clip(payload: dict) -> dict:
     """Entry point untuk server: YAMNet utama, rule-based sebagai fallback.
 
     Return {"is_glass_break", "confidence", "method": "yamnet"|"rule_hf"|"rule_legacy"|"none",
-            "is_media": bool, "fallback_reason": str|None}.
+            "is_media": bool, "is_alarm": bool, "alarm_confidence": float,
+            "alarm_source": "yamnet"|"beep_pattern"|None, "fallback_reason": str|None}.
     is_media = terindikasi suara TV/media (liveness bagian A); hanya terisi dari YAMNet.
+    is_alarm = bunyi alarm asap: YAMNet (kelas Fire alarm); kalau YAMNet tidak yakin, baru pola beep berulang (detect_beep_train).
+    Pola beep tidak butuh TensorFlow, jadi tetap jalan di jalur cadangan. Alarm yang hanya dikenali dari
+    pola beep (alarm_source == "beep_pattern") kurang pasti: beep timer/microwave berpola sama.
     """
     clip_b64 = payload.get("clip_b64")
+    no_alarm = {"is_alarm": False, "alarm_confidence": 0.0, "alarm_source": None}
     if not clip_b64:
         # Payload lama tanpa klip: pakai rule-based lama dari fitur yang dikirim edge.
         r = classify_glass_break(payload["rms_amplitude"], payload["dominant_freq_hz"], payload["duration_s"])
-        return {**r, "method": "rule_legacy", "is_media": False, "fallback_reason": "tidak ada klip di payload"}
+        return {**r, **no_alarm, "method": "rule_legacy", "is_media": False,
+                "fallback_reason": "tidak ada klip di payload"}
 
     try:
         waveform = decode_clip(clip_b64)
     except Exception as e:
         # Klip rusak: tidak ada yang bisa dianalisis lagi dari audio.
-        return {"is_glass_break": False, "confidence": 0.0, "method": "none", "is_media": False,
+        return {"is_glass_break": False, "confidence": 0.0, **no_alarm, "method": "none", "is_media": False,
                 "fallback_reason": f"klip tidak valid: {type(e).__name__}: {e}"}
 
     try:
         y = analyze_yamnet(waveform)
     except Exception as e:  # TensorFlow belum terpasang, model gagal di-load, dll.
         r = classify_glass_break_hf(waveform)
-        return {**r, "method": "rule_hf", "is_media": False,
+        beep = detect_beep_train(waveform)
+        alarm = {"is_alarm": beep["is_beep_train"], "alarm_confidence": BEEP_ONLY_CONFIDENCE if beep["is_beep_train"] else 0.0,
+                 "alarm_source": "beep_pattern" if beep["is_beep_train"] else None}
+        return {**r, **alarm, "method": "rule_hf", "is_media": False,
                 "fallback_reason": f"YAMNet tidak tersedia: {type(e).__name__}: {e}"}
 
+    # Alarm: YAMNet dulu. Pola beep hanya diperiksa kalau YAMNet TIDAK yakin DAN bukan jam weker/timer.
+    if y["alarm_score"] > ALARM_CONFIDENCE_THRESHOLD:
+        is_alarm, alarm_conf, alarm_source = True, y["alarm_score"], "yamnet"
+    elif y["alarm_clock_score"] <= HOUSEHOLD_ALARM_THRESHOLD and detect_beep_train(waveform)["is_beep_train"]:
+        is_alarm, alarm_conf, alarm_source = True, BEEP_ONLY_CONFIDENCE, "beep_pattern"
+    else:
+        is_alarm, alarm_conf, alarm_source = False, y["alarm_score"], None
     return {
         "is_glass_break": y["glass_score"] > YAMNET_CONFIDENCE_THRESHOLD,
         "confidence": y["glass_score"],
+        "is_alarm": is_alarm,
+        "alarm_confidence": alarm_conf,
+        "alarm_source": alarm_source,
+        "alarm_clock_score": y["alarm_clock_score"],
+        "ring_scores": y["ring_scores"],
         "method": "yamnet",
         "is_media": liveness_check_context(y["media_scores"]),
         "fallback_reason": None,

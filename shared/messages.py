@@ -50,11 +50,11 @@ class EnvReading:
 @dataclass
 class AlertMessage:
     """Dipublish oleh processing-server ke topic alerts (Bab 5.2 & 6.2)."""
-    event_type: str          # "glass_break" | "glass_break_needs_verification" | "fire_smoke" | "normal"
+    event_type: str          # "glass_break" | "glass_break_needs_verification" | "fire_alarm" | "fire_alarm_needs_verification" | "fire_smoke" | "normal"
     confidence: float        # 0.0 - 1.0
     location_hint: str | None = None   # misal "dapur", "kamar"
     source: str | None = None          # device_id yang memicu
-    reason: str | None = None          # kenapa "needs_verification": "media_context" | "amplitude_equal" (atau keduanya, dipisah koma)
+    reason: str | None = None          # kenapa "needs_verification": "media_context" | "amplitude_equal" | "beep_pattern" (alarm hanya dari pola beep); bisa lebih dari satu, dipisah koma
     timestamp: float = None
 
     def __post_init__(self):
