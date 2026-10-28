@@ -25,7 +25,7 @@ terpasang, server tetap jalan dan memakai cadangan rule-based untuk audio (terca
 | File | Isi | PIC |
 |---|---|---|
 | `server.py` | Orkestrasi: subscribe topic, panggil fungsi klasifikasi, publish alert, cooldown, liveness bagian B, (dashboard menyusul) | Lila |
-| `classify_audio.py` | Klasifikasi pecahan kaca dan alarm asap: YAMNet (utama, ambang 0,35), rule-based rasio band tinggi (cadangan kaca), detektor pola beep berulang (alarm, tanpa TensorFlow), liveness A dan fungsi rasio untuk B | Annis |
+| `classify_audio.py` | Klasifikasi pecahan kaca dan alarm asap: YAMNet (utama, ambang 0,35), rule-based rasio band tinggi (cadangan kaca), detektor pola beep berulang (alarm, nada 800 Hz ke atas, dibatalkan bila YAMNet membaca "Alarm clock"; tanpa TensorFlow), liveness A dan fungsi rasio untuk B | Annis |
 | `classify_fire.py` | Klasifikasi kebakaran (korelasi gas-suhu) + estimasi lokasi sumber (belum diimplementasikan) | Binar |
 | `test_recording.py` | Menilai rekaman sendiri (m4a/mp3/ogg/wav) per window, tanpa MQTT | Annis |
 | `test_liveness_b.py` | Uji simulasi liveness bagian B dan alert alarm (11 skenario) | Annis |
@@ -46,6 +46,15 @@ dan untuk bunyi alarm asap `fire_alarm` atau `fire_alarm_needs_verification`
 (field `reason`: `media_context`, `amplitude_equal`, dan/atau `beep_pattern` untuk alarm yang hanya dikenali dari pola beep). Alert yang sama untuk HP dan jenis
 yang sama diredam 10 detik (kaca) atau 30 detik (alarm, karena berbunyi terus). Ambang rasio liveness B (1,5) belum dikalibrasi dan bisa diubah lewat
 env `LIVENESS_RATIO`.
+
+Debug klip yang salah deteksi: isi env `SAVE_CLIPS_DIR` sebelum menjalankan server, maka tiap klip yang
+masuk disimpan sebagai `.wav` (nama berisi jam, device, skor kaca `g` dan alarm `a`), lalu nilai ulang
+offline dengan `test_recording.py`. Sekitar 64 KB per detik, jadi hanya untuk sesi uji.
+
+```powershell
+$env:SAVE_CLIPS_DIR = "..\klip_debug"
+python server.py
+```
 
 Dashboard (`http://localhost:8000`) belum dibuat.
 

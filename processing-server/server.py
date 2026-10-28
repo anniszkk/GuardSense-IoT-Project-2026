@@ -11,6 +11,7 @@ import json
 import time
 import time as _real_time
 import os
+import base64
 from collections import deque
 import threading
 
@@ -51,6 +52,10 @@ telemetry_history: deque[dict] = deque(maxlen=300)
 _last_alert_time: dict[tuple, float] = {}
 # Fire detection candidate buffer: device_id -> timestamp of first detection
 _fire_candidate: dict[str, float] = {}
+
+# Debug: kalau env SAVE_CLIPS_DIR diisi, setiap klip audio yang masuk disimpan sebagai .wav di folder itu
+# (nama berisi jam, device, skor kaca/alarm), supaya klip yang salah deteksi bisa dinilai ulang offline
+SAVE_CLIPS_DIR = os.getenv("SAVE_CLIPS_DIR")
 
 # ---------------------------------------------------------------------------
 # Audio-specific state & helpers (liveness B & cooldown)
@@ -156,6 +161,23 @@ def _fallback_glass_break(payload: dict) -> tuple[bool, float, str]:
     return False, 0.0, "fallback heuristic"
 
 
+def _save_clip(payload: dict, device_id: str, result: dict):
+    """Simpan klip ke SAVE_CLIPS_DIR (debug). Gagal menyimpan tidak boleh mengganggu klasifikasi."""
+    if not SAVE_CLIPS_DIR or not payload.get("clip_b64"):
+        return
+    try:
+        os.makedirs(SAVE_CLIPS_DIR, exist_ok=True)
+        tag = "kaca" if result.get("is_glass_break") else ""
+        if result.get("is_alarm"):
+            tag += ("alarm-" + str(result.get("alarm_source", "")))
+        name = (f"{_format_time(time.time()).replace(':', '')}_{device_id}_g{result.get('confidence', 0.0):.2f}"
+                f"_a{result.get('alarm_confidence', 0.0):.2f}_{tag or 'none'}.wav")
+        with open(os.path.join(SAVE_CLIPS_DIR, name), "wb") as f:
+            f.write(base64.b64decode(payload["clip_b64"]))
+    except Exception as e:
+        print(f"[audio] gagal menyimpan klip: {type(e).__name__}: {e}")
+
+
 def on_audio_message(client, userdata, msg):
     payload = json.loads(msg.payload.decode())
     summary = {k: v for k, v in payload.items() if k != "clip_b64"}
@@ -206,12 +228,16 @@ def on_audio_message(client, userdata, msg):
         print(f"[audio] classification error: {e}")
         return
 
+    ring = result.get("ring_scores") or {}
     print(
         f"[audio] {device_id} -> method={result['method']} glass={result['is_glass_break']} "
-        f"conf={result['confidence']:.2f} alarm={result['is_alarm']} alarm_conf={result['alarm_confidence']:.2f} "
+        f"conf={result['confidence']:.2f} alarm={result['is_alarm']}({result.get('alarm_source')}) "
+        f"alarm_conf={result['alarm_confidence']:.2f} clock={result.get('alarm_clock_score', 0.0):.2f} "
+        f"ding={ring.get('Ding', 0.0):.2f} bell={ring.get('Bell', 0.0):.2f} "
         f"media={result['is_media']}"
         + (f" (fallback: {result['fallback_reason']})" if result.get("fallback_reason") else "")
     )
+    _save_clip(payload, device_id, result)
 
     if result["is_glass_break"]:
         _emit_audio_alert(client, device_id, "glass_break", result["confidence"], result, rms, now)

@@ -76,6 +76,14 @@ ALARM_CLASS_NAMES = {"Fire alarm", "Smoke detector, smoke alarm"}
 # dan dengan bunyi beep rumah tangga (microwave, jam weker, bel pintu) yang belum ada di set uji.
 ALARM_CONFIDENCE_THRESHOLD = 0.35
 
+# Alarm rumah tangga (timer dapur, jam weker) juga berbunyi berulang, tapi bukan alarm asap. YAMNet
+# mengenalinya sebagai "Alarm clock": di sampel uji skornya 0.96-0.99, sedangkan alarm asap beneran
+# 0.00-0.14 (selisih lebar). Kalau skor ini tinggi, pola beep TIDAK dipakai. Telephone bell dan Doorbell
+# sengaja tidak dipakai: alarm sekolah dan nada EAS pun menyentuh 0.75 / 0.58 di kelas itu.
+RING_DIAG_CLASS_NAMES = ("Ding", "Bell")
+HOUSEHOLD_ALARM_CLASS = "Alarm clock"
+HOUSEHOLD_ALARM_THRESHOLD = 0.5
+
 # Kepercayaan tetap untuk alarm yang hanya dikenali dari pola beep (tidak ada skor model).
 BEEP_ONLY_CONFIDENCE = 0.5
 
@@ -87,6 +95,7 @@ BEEP_FRAME_S = 0.02
 BEEP_ON_FRACTION = 0.25     # beep = envelope di atas 25% puncak klip
 BEEP_MIN_S, BEEP_MAX_S = 0.3, 1.2
 BEEP_EDGE_MIN_S = 0.15     # potongan beep di tepi klip
+BEEP_MIN_HZ = 800.0         # nada beep alarm/timer 1-6 kHz; suara bicara/dengung (< 800 Hz) bukan beep
 BEEP_TONAL_MIN = 0.2        # >= 20% energi (di atas 300 Hz) di sekitar satu puncak; alarm EAS kaya harmonik (0.27)
 BEEP_FREQ_TOL = 0.05        # dua beep dianggap "nada sama" bila selisih <= 5%
 BEEP_DUR_TOL = 0.3          # dan durasi selisih <= 30%
@@ -125,7 +134,9 @@ def analyze_yamnet(waveform) -> dict:
     Skor konteks media = rata-rata antar-frame (TV/dialog/musik berlangsung terus).
     Skor alarm = skor frame tertinggi KEDUA dari kelas ALARM_CLASS_NAMES (bunyi harus bertahan
     minimal 2 frame; kalau klip cuma 1 frame, dipakai yang tertinggi).
-    Return {"glass_score": float, "alarm_score": float, "media_scores": {nama: float}}.
+    alarm_clock_score = skor frame tertinggi kelas "Alarm clock" (jam weker/timer dapur), dipakai untuk
+    membatalkan pola beep.
+    Return {"glass_score": float, "alarm_score": float, "alarm_clock_score": float, "media_scores": {nama: float}}.
     """
     model, class_names = _load_yamnet()
     scores, _embeddings, _spectrogram = model(waveform)
@@ -136,7 +147,11 @@ def analyze_yamnet(waveform) -> dict:
     alarm_cols = [class_names.index(n) for n in ALARM_CLASS_NAMES]
     alarm_frames = sorted(scores[:, alarm_cols].max(axis=1), reverse=True)
     alarm_score = float(alarm_frames[1] if len(alarm_frames) >= 2 else alarm_frames[0])
-    return {"glass_score": glass_score, "alarm_score": alarm_score, "media_scores": media_scores}
+    alarm_clock_score = float(scores[:, class_names.index(HOUSEHOLD_ALARM_CLASS)].max())
+    # Hanya diagnostik (tidak dipakai keputusan): bunyi denting/lonceng sering terbaca kaca (Chink, clink).
+    ring_scores = {n: float(scores[:, class_names.index(n)].max()) for n in RING_DIAG_CLASS_NAMES}
+    return {"glass_score": glass_score, "alarm_score": alarm_score, "alarm_clock_score": alarm_clock_score,
+            "ring_scores": ring_scores, "media_scores": media_scores}
 
 
 def classify_glass_break_yamnet(audio_clip_path: str) -> dict:
@@ -199,7 +214,7 @@ def detect_beep_train(waveform, sample_rate: int = 16000) -> dict:
             if power[m].sum() > 0:
                 f_pk = freqs[m][power[m].argmax()]
                 near = m & (np.abs(freqs - f_pk) <= 0.04 * f_pk)
-                if power[near].sum() / power[m].sum() >= BEEP_TONAL_MIN:
+                if f_pk >= BEEP_MIN_HZ and power[near].sum() / power[m].sum() >= BEEP_TONAL_MIN:
                     beeps.append((float(f_pk), dur, edge))
         i = j
 
@@ -284,10 +299,10 @@ def classify_audio_clip(payload: dict) -> dict:
         return {**r, **alarm, "method": "rule_hf", "is_media": False,
                 "fallback_reason": f"YAMNet tidak tersedia: {type(e).__name__}: {e}"}
 
-    # Alarm: YAMNet dulu. Pola beep hanya diperiksa kalau YAMNet TIDAK yakin.
+    # Alarm: YAMNet dulu. Pola beep hanya diperiksa kalau YAMNet TIDAK yakin DAN bukan jam weker/timer.
     if y["alarm_score"] > ALARM_CONFIDENCE_THRESHOLD:
         is_alarm, alarm_conf, alarm_source = True, y["alarm_score"], "yamnet"
-    elif detect_beep_train(waveform)["is_beep_train"]:
+    elif y["alarm_clock_score"] <= HOUSEHOLD_ALARM_THRESHOLD and detect_beep_train(waveform)["is_beep_train"]:
         is_alarm, alarm_conf, alarm_source = True, BEEP_ONLY_CONFIDENCE, "beep_pattern"
     else:
         is_alarm, alarm_conf, alarm_source = False, y["alarm_score"], None
@@ -297,6 +312,8 @@ def classify_audio_clip(payload: dict) -> dict:
         "is_alarm": is_alarm,
         "alarm_confidence": alarm_conf,
         "alarm_source": alarm_source,
+        "alarm_clock_score": y["alarm_clock_score"],
+        "ring_scores": y["ring_scores"],
         "method": "yamnet",
         "is_media": liveness_check_context(y["media_scores"]),
         "fallback_reason": None,

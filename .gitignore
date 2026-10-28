@@ -9,3 +9,6 @@ __pycache__/
 *.wav
 venv/
 .venv/
+
+# klip audio hasil SAVE_CLIPS_DIR (debug server)
+klip_debug/
