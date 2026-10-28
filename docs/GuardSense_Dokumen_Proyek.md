@@ -6,7 +6,7 @@ Mata Kuliah Internet of Things
 
 Dokumen Perencanaan Proyek (untuk diskusi kelompok)
 
-*Diperbarui 28 Oktober 2026: ditambahkan status implementasi dan hasil kalibrasi jalur audio (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 6.2, 8, 9.1, 10.1). Bagian gas/suhu, dashboard, dan notifikasi belum diperbarui.*
+*Diperbarui 28 Oktober 2026: ditambahkan status implementasi dan hasil kalibrasi jalur audio (Bab 4.1, 5.1, 5.2.1, 5.2.1.1, 6.2, 8, 9.1, 10.1). Ditambahkan hasil uji gas-suhu di Wokwi (Bab 5.2.2, 6.2, 8, 9.2, 10.2) dan status server serta dashboard hasil penggabungan branch integrasi (Bab 5.2.2, 8). Notifikasi ke HP lain belum diperbarui.*
 
 # 1. Masalah dan Ide
 
@@ -124,7 +124,7 @@ Tujuan tahap ini adalah mengurangi data yang perlu dikirim dan diproses lebih la
 | **Sumber**           | **Perhitungan**                                                  | **Kondisi kirim ke cloud**                                         |
 |----------------------|------------------------------------------------------------------|--------------------------------------------------------------------|
 | Mikrofon (HP A/B)    | RMS amplitudo per klip rekaman                                   | Klip tidak hening (RMS di atas 0,005)                              |
-| MQ-2 + DHT22 (ESP32) | Rate-of-rise (selisih nilai per satuan waktu) untuk gas dan suhu | Laju kenaikan gas dan/atau suhu melewati ambang kecepatan tertentu |
+| MQ-2 + DHT22 (ESP32) | Rate-of-rise (selisih nilai per satuan waktu) untuk gas dan suhu | Laju kenaikan gas dan/atau suhu melewati ambang kecepatan tertentu; saat tenang tetap mengirim satu pesan tiap 10 detik (heartbeat) agar server tahu node masih hidup |
 
 Jenis algoritma: rule-based / threshold logic — termasuk kategori "algoritma lain" sesuai ketentuan tugas.
 
@@ -152,7 +152,7 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 
 **Status implementasi (diperbarui):**
 
-- *Bagian A sudah dibuat dengan cakupan lebih sempit daripada rancangan.* Penilaian dilakukan pada **klip yang sama**: bila rata-rata skor Television, Speech, atau Music selama klip di atas 0,3 dan klip itu juga lolos klasifikasi kaca, event dikirim sebagai jenis `glass_break_needs_verification` (bukan `glass_break`) ke topic alerts. Belum dikerjakan: konteks klip sebelum dan sesudahnya, serta label "perlu verifikasi" di dashboard (dashboard belum dibuat).
+- *Bagian A sudah dibuat dengan cakupan lebih sempit daripada rancangan.* Penilaian dilakukan pada **klip yang sama**: bila rata-rata skor Television, Speech, atau Music selama klip di atas 0,3 dan klip itu juga lolos klasifikasi kaca, event dikirim sebagai jenis `glass_break_needs_verification` (bukan `glass_break`) ke topic alerts. Belum dikerjakan: konteks klip sebelum dan sesudahnya. Label "perlu verifikasi" sudah tampil di dashboard (hasil penggabungan branch integrasi).
 - *Uji simulasi (offline):* tiga sampel kaca ditempel di atas bicara dan musik dengan dua tingkat volume latar (12 campuran). Kaca polos: skor media maksimal 0,01-0,05, tidak ditandai. Pada seluruh campuran, skor media 0,34-0,94 sehingga ditandai TV. Pada 7 dari 12 campuran skor kaca tetap di atas ambang (0,43-0,90) sehingga menghasilkan "perlu verifikasi"; pada 5 campuran lainnya skor kaca jatuh ke 0,00-0,11 karena latar menutupi kaca, sehingga tidak ada alert sama sekali. Ini aman terhadap TV, tetapi artinya kaca asli yang pecah saat TV keras bisa terlewat. Belum diuji dengan pemutaran lewat mikrofon HP.
 - *Bagian B sudah dibuat di server, tetapi ambangnya belum dikalibrasi.* Server menyimpan RMS klip tiap HP (dengan jam server saat klip tiba, karena jam dua HP bisa selisih beberapa detik). Saat satu HP mendeteksi kaca, RMS-nya dibandingkan dengan klip HP lain yang tiba dalam 3 detik; rasio di bawah 1,5 dianggap "setara" (kemungkinan sumber tersebar seperti TV) dan event diberi jenis `glass_break_needs_verification` dengan alasan `amplitude_equal`. Nilai 1,5 hanya tebakan awal dan harus ditentukan dari uji dua HP sungguhan (skenario 5). HP lain yang tidak mengirim klip di sekitar kejadian dianggap hening (rasio timpang); HP lain yang tidak terlihat lebih dari 30 detik dianggap mati dan bagian B tidak menilai. Kegagalan ambang ini aman: kaca asli hanya diberi label "perlu verifikasi", alert tidak dibuang. Logika sudah lolos 7 skenario uji simulasi; belum diuji dengan dua HP.
 
@@ -166,7 +166,7 @@ Suara pecahan kaca juga umum muncul dari adegan TV, film, atau sinetron, sehingg
 
 **Gas & suhu:** Logika korelasi: ALERT hanya dipicu bila rate-of-rise gas DAN rate-of-rise suhu sama-sama melewati ambang dalam rentang waktu yang sama. Jika gas naik namun suhu stabil, kemungkinan asap berasal dari luar dan tidak langsung dianggap ALERT (lihat Bab 8).
 
-*Implementasi:* `classify_fire.py` menilai satu pesan env: `classify_fire(gas_rate, temp_rate)` menyatakan kebakaran (confidence 0,8) bila laju gas minimal 5 ADC/detik DAN laju suhu minimal 0,5 °C/detik; bila hanya salah satu, bukan kebakaran (confidence 0,3). `estimate_source_location` memilih node yang memenuhi kedua ambang dengan laju gas tertinggi, atau `belum_diketahui` bila tidak ada. Firmware mengirim bila salah satu laju melewati ambang (pre-filtering tahap 1), sehingga keputusan "kedua-duanya" ada di tahap 2. Belum dikerjakan: `server.py` belum memanggil kedua fungsi ini (hanya mencetak pesan env), belum ada jendela waktu yang menggabungkan pesan gas dan suhu dari sampel berbeda, dan belum ada kedaluwarsa pembacaan. `processing-server/demo_lokasi.py` mendemonstrasikan logika lokasi dengan kedaluwarsa 30 detik tanpa mengubah server.
+*Implementasi:* `classify_fire.py` menilai satu pesan env: `classify_fire(gas_rate, temp_rate)` menyatakan kebakaran (confidence 0,8) bila laju gas minimal 5 ADC/detik DAN laju suhu minimal 0,5 °C/detik; bila hanya salah satu, bukan kebakaran (confidence 0,3). `estimate_source_location` memilih node yang memenuhi kedua ambang dengan laju gas tertinggi, atau `belum_diketahui` bila tidak ada. Firmware mengirim bila salah satu laju melewati ambang (pre-filtering tahap 1), sehingga keputusan "kedua-duanya" ada di tahap 2. `server.py` (hasil penggabungan branch integrasi) memanggil kedua fungsi ini di `on_env_message`: lonjakan pertama dari sebuah node dikirim sebagai `fire_smoke_needs_verification`, dan `fire_smoke` penuh baru terbit bila lonjakan kedua dari node yang sama datang dalam 10 detik (konstanta `FIRE_CONFIRM_WINDOW_S`); cooldown 20 detik per node dan level. Belum dikerjakan: jendela waktu yang menggabungkan pesan gas dan suhu dari sampel berbeda, serta kedaluwarsa pembacaan lama untuk estimasi lokasi (server memakai pembacaan terakhir tiap node tanpa batas umur). `processing-server/demo_lokasi.py` mendemonstrasikan logika lokasi dengan kedaluwarsa 30 detik.
 
 **Lokasi sumber:** Dengan dua titik ESP32 (dapur dan kamar), node dengan kadar gas tertinggi/kenaikan tercepat dianggap sebagai perkiraan lokasi sumber asap (pendekatan sederhana berbasis perbandingan nilai antarnode, bukan triangulasi presisi).
 
@@ -191,7 +191,7 @@ Seluruh edge device dan processing server berkomunikasi lewat broker MQTT publik
 | guardsense/\<PROJECT_ID\>/edge/hpB/audio       | HP B              | Sama seperti di atas, titik berbeda                                |
 | guardsense/\<PROJECT_ID\>/edge/esp32_dapur/env | ESP32 dapur       | Gas (ADC mentah), suhu, rate-of-rise gas dan suhu; tanpa timestamp (server memakai waktu tiba pesan) |
 | guardsense/\<PROJECT_ID\>/edge/esp32_kamar/env | ESP32 kamar       | Sama seperti di atas, titik berbeda                                |
-| guardsense/\<PROJECT_ID\>/alerts               | Processing server | Status klasifikasi akhir: jenis event (`glass_break` atau `glass_break_needs_verification`), lokasi, tingkat kepercayaan |
+| guardsense/\<PROJECT_ID\>/alerts               | Processing server | Status klasifikasi akhir: jenis event (`glass_break`, `fire_alarm`, `fire_smoke`, dan masing-masing versi `_needs_verification`), lokasi, tingkat kepercayaan, alasan |
 
 PROJECT_ID diganti dengan nama unik kelompok agar topic tidak bercampur dengan kelompok lain yang memakai broker publik yang sama.
 
@@ -217,7 +217,7 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Estimasi lokasi sumber asap hanya berbasis perbandingan nilai antarnode (node dengan kenaikan tercepat/tertinggi), bukan triangulasi presisi, sehingga akurasi lokasi bersifat kasar (per-ruangan, bukan per-titik).
 
-- Gas dan suhu belum digabung dalam jendela waktu. Firmware hanya mengirim saat ada lonjakan, dan `classify_fire` menilai satu pesan; bila gas dan suhu melonjak di sampel (2 detik) yang berbeda, tidak ada yang dianggap kebakaran. Penggabungan di server dalam jendela sekitar 20-30 detik dan kedaluwarsa pembacaan lama masih harus dibuat. Kadar gas yang bertahan tinggi juga tidak menimbulkan pesan baru, hanya lonjakannya.
+- Gas dan suhu belum digabung dalam jendela waktu. Firmware hanya mengirim saat ada lonjakan, dan `classify_fire` menilai satu pesan; bila gas dan suhu melonjak di sampel (2 detik) yang berbeda, tidak ada yang dianggap kebakaran. Penggabungan di server dalam jendela sekitar 20-30 detik dan kedaluwarsa pembacaan lama masih harus dibuat. Kadar gas yang bertahan tinggi juga tidak menimbulkan alert baru, hanya lonjakannya (pesan heartbeat tiap 10 detik tidak mengubah ini karena lajunya rendah).
 
 - Ambang awal gas (5 ADC/detik) dan suhu (0,5 °C/detik) sangat longgar dan belum dikalibrasi: di simulasi setiap langkah slider gas melewatinya, termasuk kenaikan pelan, sehingga gas saja tidak bisa membedakan asap luar dari kebakaran; pembedanya adalah suhu. Lonjakan suhu 5-28 °C/detik hanya mungkin dari slider, bukan dari sensor nyata.
 
@@ -235,7 +235,7 @@ Beberapa keterbatasan yang perlu didokumentasikan secara jujur, bukan diklaim se
 
 - Liveness bagian B hanya memakai klip HP lain yang sudah tiba saat keputusan diambil; klip HP lain yang tiba hingga sekitar 2 detik sesudahnya belum ikut dinilai. Efeknya bias ke "timpang" (kaca asli tidak diberi label keliru), tetapi kasus TV bisa lolos sebagai alert penuh. Selain itu perbedaan gain mikrofon antar-HP bisa memengaruhi rasio.
 
-- Label "perlu verifikasi" belum tampil di dashboard karena dashboard belum dibuat.
+- Label "perlu verifikasi" dan alasannya (konteks TV/media, amplitudo setara, pola beep, kenaikan gas-suhu) sudah tampil di riwayat event dashboard; dashboard belum diuji lintas perangkat dan belum menampilkan notifikasi getar/bunyi.
 
 - Bunyi berdering atau berdenting bernada tinggi (bel, lonceng, nada EAS, denting) bisa terbaca YAMNet sebagai kaca lewat mikrofon HP. Pembeda yang dicoba (kemurnian nada, peringkat kelas kaca di frame puncak, skor kelas Ding dan Bell, embedding YAMNet) tidak memisahkan dengan andal; skor Bell bahkan mencapai 0,99 pada klip kaca yang benar. Embedding hanya memberi sinyal tipis dengan data sangat terbatas dan tidak dipakai.
 
@@ -307,11 +307,14 @@ Metode: firmware dibangun dengan PlatformIO dan dijalankan di simulator Wokwi (V
 | 6 | Gas dan suhu naik di sampel yang sama | 20,5 ADC/detik dan 8,1 °C/detik, terkirim. `classify_fire(20,5; 8,1)`: kebakaran, confidence 0,8 |
 | 5.2.2 | Estimasi lokasi, 4 skenario simulasi (`demo_lokasi.py --simulasi`) | Dapur bila hanya dapur memenuhi dua ambang; tetap dapur bila gas kamar lebih cepat tetapi suhunya tidak lolos; pindah ke kamar bila kamar memenuhi dua ambang dengan gas lebih cepat; `belum_diketahui` bila semua pembacaan lebih tua dari 30 detik. Offline, belum live dengan dua Wokwi |
 | 7 | Asap luar (gas naik pelan, suhu stabil) | Belum diuji dengan benar: ambang gas terlalu longgar sehingga kenaikan pelan pun melewatinya |
-| - | Server menerima pesan env dan menerbitkan alert kebakaran | Belum: `on_env_message` baru mencetak pesan |
+| - | Server menerima pesan env dari Wokwi dan menerbitkan alert kebakaran | Lolos untuk node dapur. Gas naik tanpa suhu (46 ADC/detik): tidak ada alert. Gas dan suhu naik bersamaan (29,5 ADC/detik dan 6,75 °C/detik): `fire_smoke_needs_verification`. Lonjakan kedua 25 detik setelah yang pertama menjadi `fire_smoke` (saat itu jendela konfirmasi 30 detik; sekarang 10 detik, sehingga jeda segitu kini hanya VERIFY) |
+| - | Pengiriman simulasi tanpa Wokwi (`publish_env.py bahaya`) | Lolos: lonjakan pertama `fire_smoke_needs_verification`, lonjakan kedua dalam 10 detik (jeda uji 4 detik) `fire_smoke` |
+| - | Lokasi sumber lewat server (`publish_env.py lokasi`) | Alert dapur berlokasi `esp32_dapur`; setelah kamar melonjak dengan gas lebih cepat, alert kamar berlokasi `esp32_kamar` |
+| - | Tampilan dashboard saat ada alert | Lolos: riwayat menampilkan level VERIFY, jenis "Indikasi asap (verifikasi)", sumber dan lokasi `esp32_dapur`, akurasi 80%, dan alasan; status sistem berubah menjadi BAHAYA (hero hitam) dengan 12 kejadian tercatat. Sebelum ada heartbeat, kartu ESP32 tetap OFFLINE saat tenang (0 dari 4 perangkat online walau status BAHAYA); setelah heartbeat 10 detik ditambahkan, kartu tetap ONLINE selama Wokwi berjalan |
 
-Perbaikan dari hasil uji ini: pin gas di `diagram.json` salah nama (`AO`, seharusnya `AOUT` pada part `wokwi-gas-sensor`, sehingga pembacaan gas tidak berubah); `timestamp` dari `millis()` dihapus dari payload karena itu waktu sejak menyala, bukan epoch (server memakai waktu tiba); selang laju dihitung dari sampel valid terakhir (sampel DHT22 yang gagal tadinya membuat laju terlihat dua kali lebih besar); akhir baris Serial diubah ke CRLF agar tampilan terminal Wokwi rapi.
+Perbaikan dari hasil uji ini: pin gas di `diagram.json` salah nama (`AO`, seharusnya `AOUT` pada part `wokwi-gas-sensor`, sehingga pembacaan gas tidak berubah); `timestamp` dari `millis()` dihapus dari payload karena itu waktu sejak menyala, bukan epoch (server memakai waktu tiba); selang laju dihitung dari sampel valid terakhir (sampel DHT22 yang gagal tadinya membuat laju terlihat dua kali lebih besar); akhir baris Serial diubah ke CRLF agar tampilan terminal Wokwi rapi; ditambahkan heartbeat tiap 10 detik supaya server dan dashboard menganggap node online selama hidup.
 
-Temuan lain: yang dinilai adalah laju kenaikan, bukan kadar, jadi gas yang bertahan tinggi (misalnya slider tetap di nilai besar) tidak memicu apa pun setelah lonjakan pertama; gas dan suhu yang naik di sampel berbeda tidak dianggap kebakaran (lihat Bab 8); koneksi ke broker publik putus lalu tersambung lagi sekitar tiap 30 detik di simulasi, tanpa pesan gagal kirim yang terlihat. Kelembapan DHT22 belum dibaca firmware.
+Temuan lain: yang dinilai adalah laju kenaikan, bukan kadar, jadi gas yang bertahan tinggi (misalnya slider tetap di nilai besar) tidak memicu apa pun setelah lonjakan pertama; gas dan suhu yang naik di sampel berbeda tidak dianggap kebakaran (lihat Bab 8); koneksi ke broker publik putus lalu tersambung lagi sekitar tiap 30 detik di simulasi, tanpa pesan gagal kirim yang terlihat. Sebelum ada heartbeat, perangkat terlihat OFFLINE di dashboard selama tidak ada lonjakan, karena server menganggap online hanya bila ada pesan dalam 15 detik terakhir; masalah ini diatasi dengan heartbeat tiap 10 detik. Kelembapan DHT22 belum dibaca firmware.
 
 # 10. Pembagian Tugas
 
@@ -345,7 +348,7 @@ Dibagi berdasarkan jalur kerja end-to-end (bukan per jenis aktivitas), supaya se
 | 6      | Uji & kalibrasi ambang batas pakai slider virtual MQ-2/DHT22 di Wokwi (simulasi kebakaran vs asap luar) | Nilai ambang batas final + catatan hasil kalibrasi              |
 | 7      | Menulis Bab 4.2, 4.3, 5.1 (bagian gas/suhu), 5.2.2 di laporan akhir                                     | Draf bagian laporan terkait gas/suhu                            |
 
-**Status (28 Oktober 2026):** Tugas 1-3 jalan di Wokwi untuk node dapur (Bab 9.2); node kamar baru lolos build. Tugas 4 dan 5 ada di `classify_fire.py` dan lolos uji offline, tetapi belum dipanggil `server.py`. Tugas 6 sebagian: skenario slider dasar sudah diuji, sedangkan kalibrasi ambang final dan skenario asap luar yang pelan belum.
+**Status (28 Oktober 2026):** Tugas 1-3 jalan di Wokwi untuk node dapur (Bab 9.2); node kamar baru lolos build. Tugas 4 dan 5 ada di `classify_fire.py`, lolos uji offline, dan sudah dipanggil `server.py` (lolos diuji dengan Wokwi dan dashboard untuk node dapur, serta dengan pesan simulasi lewat `publish_env.py` untuk dua node). Tugas 6 sebagian: skenario slider dasar sudah diuji, sedangkan kalibrasi ambang final dan skenario asap luar yang pelan belum.
 
 ## 10.3 Lila — Integrasi, Cloud, dan Dashboard
 
